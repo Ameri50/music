@@ -2,6 +2,8 @@
 
 Reproductor de música personal hecho en React. Sube tus canciones y escúchalas sin anuncios, incluso con la pantalla del celular apagada.
 
+**App en vivo:** https://ameri50.github.io/music/
+
 ## Qué incluye
 
 - **Biblioteca local**: tus archivos de audio viven en tu dispositivo (IndexedDB). Nada se sube a un servidor.
