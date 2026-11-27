@@ -151,6 +151,7 @@ export async function pushLocalLibrary(uid, albums, tracks, onProgress) {
   const total = albums.length + tracks.length;
   let done = 0;
   let failed = 0;
+  let firstError = null;
   const step = () => onProgress?.(done, total);
 
   for (const album of albums) {
@@ -159,15 +160,17 @@ export async function pushLocalLibrary(uid, albums, tracks, onProgress) {
       if (album.coverBlob) {
         try {
           coverUrl = await uploadAlbumCover(uid, album.id, album.coverBlob);
-        } catch {
+        } catch (err) {
           failed += 1;
+          firstError = firstError || err;
         }
       }
       const next = { ...album, coverUrl, synced: true, ownerUid: uid };
       await saveAlbumCloud(uid, next);
       await putAlbum(next);
-    } catch {
+    } catch (err) {
       failed += 1;
+      firstError = firstError || err;
     }
     done += 1;
     step();
@@ -184,13 +187,28 @@ export async function pushLocalLibrary(uid, albums, tracks, onProgress) {
       const next = { ...track, synced: true, ownerUid: uid };
       await saveTrackCloud(uid, next);
       await putTrack(next);
-    } catch {
+    } catch (err) {
       failed += 1;
+      firstError = firstError || err;
     }
     done += 1;
     step();
   }
-  return { failed };
+  return { failed, firstError };
+}
+
+export function storageErrorMessage(err) {
+  const raw = `${err?.customData?.serverResponse || ''} ${err?.message || ''}`;
+  if (/billing|accountdisabled|state closed/i.test(raw)) {
+    return 'Firebase Storage está deshabilitado: la facturación del proyecto está cerrada. Reactívala en Firebase → Uso y facturación.';
+  }
+  if (err?.code === 'storage/unauthorized') {
+    return 'Firebase Storage rechazó la subida (revisa las reglas).';
+  }
+  if (err?.code === 'storage/retry-limit-exceeded' || err?.code === 'storage/canceled') {
+    return 'Se cortó la subida. Revisa tu conexión.';
+  }
+  return '';
 }
 
 export function mergeCloudLibrary(cloud, localAlbums, localTracks, uid) {

@@ -23,6 +23,7 @@ import {
   signInWithGoogle,
   signOutUser,
   staleLocalItems,
+  storageErrorMessage,
   uploadAlbumCover,
   uploadTrackAudio,
   watchAuth,
@@ -241,7 +242,7 @@ export default function App() {
       pushLocalLibrary(uidKey, job.albums, job.tracks, (done, total) => {
         if (isActive()) setBusy(`Sincronizando en la nube… ${done}/${total}`);
       })
-        .then(async ({ failed }) => {
+        .then(async ({ failed, firstError }) => {
           const savedAlbums = await getAlbums();
           const savedTracks = await getTracks();
           if (!isActive()) return;
@@ -251,14 +252,17 @@ export default function App() {
           setTracks(savedTracks);
           setQueue((prev) => prev.filter((id) => savedTracks.some((t) => t.id === id)));
           setBusy('');
+          if (failed) console.error('Sincronización incompleta:', firstError);
+          const reason = storageErrorMessage(firstError);
           notify(
             failed
-              ? `Sincronización incompleta: ${failed} archivo${failed === 1 ? '' : 's'} pendiente${failed === 1 ? '' : 's'}. Se reintentará al abrir la app.`
+              ? `${reason || `Sincronización incompleta: ${failed} archivo${failed === 1 ? '' : 's'} pendiente${failed === 1 ? '' : 's'}.`} Se reintentará al abrir la app.`
               : 'Biblioteca sincronizada en la nube.'
           );
         })
-        .catch(() => {
+        .catch((err) => {
           if (!isActive()) return;
+          console.error(err);
           setBusy('');
           notify('Sin conexión: la sincronización se reintentará al abrir la app.');
         });
@@ -782,6 +786,7 @@ export default function App() {
       setTracks((prev) => [...prev, ...added]);
 
       let pending = 0;
+      let firstNameError = null;
       for (let i = 0; i < added.length; i += 1) {
         const track = added[i];
         setBusy(`Subiendo a la nube… ${i + 1}/${added.length}`);
@@ -791,8 +796,9 @@ export default function App() {
           const synced = { ...track, synced: true };
           await putTrack(synced);
           setTracks((prev) => prev.map((t) => (t.id === track.id ? synced : t)));
-        } catch {
+        } catch (err) {
           pending += 1;
+          firstNameError = firstNameError || err;
         }
       }
       setBusy('');
@@ -800,7 +806,13 @@ export default function App() {
         added.length === 1 ? `“${added[0].title}” agregada` : `${added.length} canciones agregadas`;
       const notes = [];
       if (skipped) notes.push(`${skipped} ya estaba${skipped === 1 ? '' : 'n'}`);
-      if (pending) notes.push(`${pending} sin subir (revisa tu conexión)`);
+      if (pending) {
+        console.error('Subida incompleta:', firstNameError);
+        notes.push(
+          storageErrorMessage(firstNameError) ||
+            `${pending} sin subir (revisa tu conexión)`
+        );
+      }
       notify(notes.length ? `${base} · ${notes.join(' · ')}` : base);
     },
     [albums, notify, user]
