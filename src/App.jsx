@@ -103,6 +103,20 @@ async function syncLibrary(user, progress) {
     }
   }
 
+  // reintenta portadas que quedaron pendientes en una subida anterior
+  const localAlbumById = new Map(localAlbums.map((a) => [a.id, a]));
+  for (const album of cloud.albums) {
+    const local = localAlbumById.get(album.id);
+    if (!album.coverUrl && local?.coverBlob) {
+      try {
+        album.coverUrl = await uploadAlbumCover(uidKey, album.id, local.coverBlob);
+        await saveAlbumCloud(uidKey, album);
+      } catch {
+        /* se reintenta en el próximo arranque */
+      }
+    }
+  }
+
   const { albums, tracks } = mergeCloudLibrary(cloud, localAlbums, localTracks, uidKey);
   const stale = staleLocalItems(cloud, localAlbums, localTracks, uidKey);
   for (const id of stale.albumIds) await removeAlbum(id);
