@@ -42,6 +42,9 @@ npm run preview
 
 En Android basta con reproducir y bloquear: el navegador muestra los controles en la notificación.
 
-## Deploy en GitHub Pages
+## Deploy
 
-El proyecto ya está configurado con `base: '/music/'` para servir en `https://ameri50.github.io/music/`. Publica el contenido de `dist/` en una rama `gh-pages` y activa GitHub Pages en el repositorio.
+La build usa `base: './'` (rutas relativas), así que el mismo `dist/` funciona tanto en `https://ameri50.github.io/music/` como en Vercel (raíz del dominio) sin tocar nada.
+
+- **GitHub Pages:** publica el contenido de `dist/` en la rama `gh-pages` (incluye un archivo `.nojekyll`).
+- **Vercel:** conecta el repositorio; detecta Vite y publica `dist/` automáticamente.
