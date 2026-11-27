@@ -1,8 +1,14 @@
 import { useState } from 'react';
+import { isInAppBrowser, isIosStandalone } from '../lib/cloud';
 
 export default function Login({ onSignIn, onGoogle, error, busy }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const hint = isInAppBrowser()
+    ? 'Estás dentro del navegador de otra app. Para entrar con Google, abre esta página en Safari o Chrome.'
+    : isIosStandalone()
+      ? 'En la app añadida a la pantalla de inicio, Google no puede devolver la sesión. Abre ameri50.github.io/music en Safari o entra con correo y contraseña.'
+      : '';
 
   return (
     <div className="login-wrap">
@@ -54,6 +60,7 @@ export default function Login({ onSignIn, onGoogle, error, busy }) {
           </svg>
           Continuar con Google
         </button>
+        {hint && <p className="login-hint">{hint}</p>}
 
         <div className="login-or">
           <span>o con tu correo</span>
@@ -84,7 +91,7 @@ export default function Login({ onSignIn, onGoogle, error, busy }) {
         <button type="submit" className="btn btn-primary login-btn" disabled={busy}>
           {busy ? 'Entrando…' : 'Entrar'}
         </button>
-        <small>Tu biblioteca queda ligada a esta cuenta.</small>
+        <small>La biblioteca es compartida: cualquier cuenta que entre puede verla.</small>
       </form>
     </div>
   );

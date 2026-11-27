@@ -1286,6 +1286,18 @@ main {
   font-size: 13px;
 }
 
+.login-hint {
+  margin: 0;
+  padding: 9px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 200, 80, 0.3);
+  background: rgba(255, 190, 60, 0.08);
+  color: #ffd479;
+  font-size: 12.5px;
+  line-height: 1.5;
+  text-align: left;
+}
+
 .login-btn {
   justify-content: center;
   height: 46px;

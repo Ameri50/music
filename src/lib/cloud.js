@@ -44,6 +44,16 @@ const isMobileBrowser = () => {
   );
 };
 
+export const isIosStandalone = () =>
+  /iPhone|iPad|iPod/i.test(navigator.userAgent || '') &&
+  (window.matchMedia?.('(display-mode: standalone)')?.matches ||
+    window.navigator.standalone === true);
+
+export const isInAppBrowser = () =>
+  /FBAN|FBAV|FB_IAB|Instagram|Line\/|WhatsApp|Twitter|MicroMessenger|Snapchat|Pinterest/i.test(
+    navigator.userAgent || ''
+  );
+
 export async function signInWithGoogle() {
   // En móviles Safari/Chrome bloquean la ventana emergente de forma
   // intermitente: la redirección es más estable.
@@ -284,6 +294,9 @@ export function authErrorMessage(err) {
   }
   if (code.includes('account-exists-with-different-credential')) {
     return 'Ese correo ya está registrado con contraseña. Entra con tu correo y contraseña.';
+  }
+  if (code.includes('disallowed_useragent')) {
+    return 'Google bloqueó el navegador integrado de otra app. Abre esta página en Safari o Chrome.';
   }
   if (code.includes('permission-denied')) {
     return 'Esta cuenta no tiene permisos de administrador en Firebase.';
