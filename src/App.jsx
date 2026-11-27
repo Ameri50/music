@@ -939,12 +939,15 @@ export default function App() {
       <div className="splash">
         <h1>ONDA</h1>
         <p>{bootError}</p>
+        {user?.email && (
+          <p className="splash-mail">Cuenta conectada: {user.email}</p>
+        )}
         <div className="splash-actions">
           <button className="btn btn-primary" onClick={() => window.location.reload()}>
             Reintentar
           </button>
           <button className="btn btn-ghost" onClick={handleSignOut}>
-            Cerrar sesión
+            Usar otra cuenta
           </button>
         </div>
       </div>
