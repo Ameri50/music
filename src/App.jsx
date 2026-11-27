@@ -7,7 +7,7 @@ import {
   removeAlbum,
   removeTrack,
 } from './lib/db';
-import { fmtTotal, parseFileName, readDuration, uid } from './lib/utils';
+import { fmtTotal, isAudioFile, normalizeAudioFile, parseFileName, readDuration, uid } from './lib/utils';
 import { useObjectUrl } from './lib/useObjectUrl';
 import AlbumCover from './components/AlbumCover';
 import Player from './components/Player';
@@ -18,7 +18,6 @@ const PLAYLIST_URL =
 const REAL_HASTA_SPOTIFY =
   'https://open.spotify.com/intl-es/album/4Gqg391dMB9BA7pPW331Ag?si=H5XjjPQgSJ6eOvgiylsMvA';
 const REPEAT_CYCLE = { all: 'one', one: 'off', off: 'all' };
-const AUDIO_EXT = /\.(mp3|m4a|mp4|aac|wav|ogg|oga|flac|opus|weba|webm)$/i;
 
 let bootPromise = null;
 function boot() {
@@ -41,13 +40,14 @@ function boot() {
         for (const album of albums) await putAlbum(album);
       }
       albums.sort((a, b) => a.createdAt - b.createdAt);
-      // completa el link de Spotify en álbumes creados antes de existir ese campo
-      const realHasta = albums.find(
-        (a) => a.name.trim().toLowerCase() === 'real hasta la muerte'
+      // completa el link de Spotify en álbumes de Real Hasta la Muerte sin enlace
+      const realHastaAlbums = albums.filter((a) =>
+        a.name.trim().toLowerCase().startsWith('real hasta la muerte')
       );
-      if (realHasta && !realHasta.spotifyUrl) {
-        realHasta.spotifyUrl = REAL_HASTA_SPOTIFY;
-        await putAlbum({ ...realHasta });
+      for (const album of realHastaAlbums) {
+        if (album.spotifyUrl) continue;
+        album.spotifyUrl = REAL_HASTA_SPOTIFY;
+        await putAlbum({ ...album });
       }
       const tracks = await getTracks();
       return { albums, tracks };
@@ -59,6 +59,7 @@ function boot() {
 export default function App() {
   const audioRef = useRef(null);
   const fileRef = useRef(null);
+  const folderRef = useRef(null);
   const targetAlbumRef = useRef(null);
   const playOnLoadRef = useRef(false);
   const pendingRestoreRef = useRef(null);
@@ -97,6 +98,10 @@ export default function App() {
   const albumsById = useMemo(
     () => Object.fromEntries(albums.map((a) => [a.id, a])),
     [albums]
+  );
+  const supportsFolder = useMemo(
+    () => 'webkitdirectory' in document.createElement('input'),
+    []
   );
 
   const notify = useCallback((msg) => {
@@ -404,11 +409,26 @@ export default function App() {
         notify('Crea un álbum primero');
         return;
       }
-      const files = Array.from(fileList || []).filter(
-        (f) => f.type.startsWith('audio/') || AUDIO_EXT.test(f.name)
-      );
-      if (!files.length) {
+      const raw = Array.from(fileList || []).filter(isAudioFile);
+      if (!raw.length) {
         notify('Esos archivos no son de audio');
+        return;
+      }
+      const existing = new Set(
+        tracksRef.current.filter((t) => t.albumId === albumId).map((t) => t.fileName)
+      );
+      const files = [];
+      let skipped = 0;
+      for (const file of raw) {
+        if (existing.has(file.name)) {
+          skipped += 1;
+          continue;
+        }
+        existing.add(file.name);
+        files.push(normalizeAudioFile(file));
+      }
+      if (!files.length) {
+        notify('Esas canciones ya están en el álbum');
         return;
       }
       const album = albums.find((a) => a.id === albumId);
@@ -432,19 +452,42 @@ export default function App() {
       }
       setTracks((prev) => [...prev, ...added]);
       setBusy('');
-      notify(
-        added.length === 1 ? `“${added[0].title}” agregada` : `${added.length} canciones agregadas`
-      );
+      const base =
+        added.length === 1 ? `“${added[0].title}” agregada` : `${added.length} canciones agregadas`;
+      notify(skipped ? `${base} · ${skipped} ya estaba${skipped === 1 ? '' : 'n'}` : base);
     },
     [albums, notify]
   );
 
+  const uploadTarget = useCallback(
+    () => targetAlbumRef.current || (view.name === 'album' ? view.id : defaultAlbumId()),
+    [view, defaultAlbumId]
+  );
+
   const onFileInput = (e) => {
     const files = e.target.files ? Array.from(e.target.files) : [];
-    const target = targetAlbumRef.current || defaultAlbumId();
+    const target = uploadTarget();
     e.target.value = '';
     if (files.length) handleFiles(files, target);
   };
+
+  const onFolderInput = (e) => {
+    const files = e.target.files ? Array.from(e.target.files) : [];
+    const target = uploadTarget();
+    e.target.value = '';
+    if (files.length) handleFiles(files, target);
+  };
+
+  const openFolderPicker = useCallback(
+    (albumId) => {
+      targetAlbumRef.current = albumId || uploadTarget();
+      if (folderRef.current) {
+        folderRef.current.value = '';
+        folderRef.current.click();
+      }
+    },
+    [uploadTarget]
+  );
 
   const createAlbum = async (data) => {
     const album = {
@@ -591,10 +634,19 @@ export default function App() {
         <input
           ref={fileRef}
           type="file"
-          accept="audio/*,.mp3,.m4a,.aac,.wav,.ogg,.flac,.opus"
+          accept="audio/*,.mp3,.m4a,.aac,.wav,.ogg,.flac,.opus,.mpeg"
           multiple
           hidden
           onChange={onFileInput}
+        />
+        <input
+          ref={folderRef}
+          type="file"
+          multiple
+          webkitdirectory=""
+          directory=""
+          hidden
+          onChange={onFolderInput}
         />
       </header>
 
@@ -777,6 +829,23 @@ export default function App() {
                   <b>Arrastra tus archivos</b> o toca para elegir · MP3, M4A, WAV…
                 </span>
               </div>
+
+              {supportsFolder && (
+                <div className="folder-hint">
+                  <button className="folder-btn" onClick={() => openFolderPicker(albumView.id)}>
+                    <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
+                      <path
+                        d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.8"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                    Importar una carpeta completa de una vez
+                  </button>
+                </div>
+              )}
 
               <div className="section-head">
                 <h2>Canciones</h2>

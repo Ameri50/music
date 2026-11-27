@@ -19,9 +19,39 @@ export function fmtTotal(sec) {
   return `${Math.floor(m / 60)} h ${m % 60} min`;
 }
 
+export const AUDIO_EXT = /\.(mp3|m4a|mp4|aac|wav|ogg|oga|flac|opus|weba|webm|mpeg)$/i;
+
+const MIME_BY_EXT = {
+  mp3: 'audio/mpeg',
+  mpeg: 'audio/mpeg',
+  m4a: 'audio/mp4',
+  mp4: 'audio/mp4',
+  aac: 'audio/aac',
+  wav: 'audio/wav',
+  ogg: 'audio/ogg',
+  oga: 'audio/ogg',
+  opus: 'audio/ogg',
+  flac: 'audio/flac',
+  weba: 'audio/webm',
+  webm: 'audio/webm',
+};
+
+export function isAudioFile(file) {
+  return file.type.startsWith('audio/') || AUDIO_EXT.test(file.name || '');
+}
+
+export function normalizeAudioFile(file) {
+  if (file.type.startsWith('audio/')) return file;
+  const ext = (file.name.match(/\.([a-z0-9]+)$/i) || [])[1]?.toLowerCase();
+  const type = MIME_BY_EXT[ext];
+  return type ? new File([file], file.name, { type, lastModified: file.lastModified }) : file;
+}
+
 export function parseFileName(name = '') {
-  const base = name.replace(/\.[^.]+$/, '').replace(/_+/g, ' ').trim();
-  const parts = base.split(/\s+-\s+/);
+  let base = name;
+  while (AUDIO_EXT.test(base)) base = base.replace(AUDIO_EXT, '');
+  base = base.replace(/_+/g, ' ').replace(/\s+/g, ' ').trim();
+  const parts = base.split(/\s+[–—-]\s+/);
   if (parts.length >= 2) {
     const artist = parts[0].trim();
     const title = parts.slice(1).join(' - ').trim();
