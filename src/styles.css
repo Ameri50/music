@@ -1115,6 +1115,15 @@ main {
   font-weight: 600;
 }
 
+.splash-detail {
+  max-width: 40ch !important;
+  color: var(--muted) !important;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px !important;
+  word-break: break-all;
+  opacity: 0.75;
+}
+
 .splash-mark {
   width: 56px;
   height: 56px;

@@ -146,23 +146,30 @@ export async function deleteAlbumCloud(uid, albumId) {
 
 // Sube metadatos + audio a la nube. Los IDs locales se conservan para que
 // la caché de audio (IndexedDB) siga sirviendo sin volver a descargar.
+// Un archivo que falla no detiene al resto: queda pendiente para el próximo
+// arranque. Devuelve cuántos elementos no se pudieron subir.
 export async function pushLocalLibrary(uid, albums, tracks, onProgress) {
   const total = albums.length + tracks.length;
   let done = 0;
+  let failed = 0;
   const step = () => onProgress?.(done, total);
 
   for (const album of albums) {
-    let coverUrl = album.coverUrl || '';
-    if (album.coverBlob) {
-      try {
-        coverUrl = await uploadAlbumCover(uid, album.id, album.coverBlob);
-      } catch {
-        /* sin portada remota: se reintenta al siguiente arranque */
+    try {
+      let coverUrl = album.coverUrl || '';
+      if (album.coverBlob) {
+        try {
+          coverUrl = await uploadAlbumCover(uid, album.id, album.coverBlob);
+        } catch {
+          failed += 1;
+        }
       }
+      const next = { ...album, coverUrl, synced: true, ownerUid: uid };
+      await saveAlbumCloud(uid, next);
+      await putAlbum(next);
+    } catch {
+      failed += 1;
     }
-    const next = { ...album, coverUrl, synced: true, ownerUid: uid };
-    await saveAlbumCloud(uid, next);
-    await putAlbum(next);
     done += 1;
     step();
   }
@@ -173,13 +180,18 @@ export async function pushLocalLibrary(uid, albums, tracks, onProgress) {
       step();
       continue;
     }
-    await uploadTrackAudio(uid, track.id, track.blob);
-    const next = { ...track, synced: true, ownerUid: uid };
-    await saveTrackCloud(uid, next);
-    await putTrack(next);
+    try {
+      await uploadTrackAudio(uid, track.id, track.blob);
+      const next = { ...track, synced: true, ownerUid: uid };
+      await saveTrackCloud(uid, next);
+      await putTrack(next);
+    } catch {
+      failed += 1;
+    }
     done += 1;
     step();
   }
+  return { failed };
 }
 
 export function mergeCloudLibrary(cloud, localAlbums, localTracks, uid) {

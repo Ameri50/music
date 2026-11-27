@@ -46,22 +46,34 @@ async function syncLibrary(user, progress) {
   const uidKey = user.uid;
   const localAlbums = await getAlbums();
   const localTracks = await getTracks();
-  let cloud = await fetchCloudLibrary(uidKey);
+  let cloud;
+  try {
+    cloud = await fetchCloudLibrary(uidKey);
+  } catch (err) {
+    if (err?.code?.includes('permission-denied')) throw err;
+    // sin conexión: se abre con lo que ya está guardado en el dispositivo
+    return {
+      albums: [...localAlbums].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0)),
+      tracks: [...localTracks].sort((a, b) => (a.addedAt || 0) - (b.addedAt || 0)),
+      background: null,
+      offline: true,
+    };
+  }
 
   const ownAlbums = localAlbums.filter((a) => !a.ownerUid || a.ownerUid === uidKey);
   const ownTracks = localTracks.filter((t) => !t.ownerUid || t.ownerUid === uidKey);
 
+  // Lo que falte por subir no bloquea el arranque: se envía después.
+  let background = null;
+
   if (!cloud.albums.length && !cloud.tracks.length) {
-    if (ownAlbums.length) {
-      // primera sincronización: sube lo que ya existe en este dispositivo
-      progress('Subiendo tu biblioteca a la nube…');
-      await pushLocalLibrary(
-        uidKey,
-        [...ownAlbums].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0)),
-        ownTracks.filter((t) => t.blob),
-        (done, total) => progress(`Subiendo biblioteca… ${done}/${total}`)
-      );
-      cloud = await fetchCloudLibrary(uidKey);
+    if (ownAlbums.length || ownTracks.length) {
+      // primera sincronización: se conserva lo local y se sube aparte
+      background = {
+        albums: [...ownAlbums].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0)),
+        tracks: ownTracks.filter((t) => t.blob),
+      };
+      progress('Biblioteca lista · sincronizando en la nube…');
     } else {
       progress('Preparando tu biblioteca…');
       const now = Date.now();
@@ -86,11 +98,7 @@ async function syncLibrary(user, progress) {
     const unsyncedAlbums = ownAlbums.filter((a) => !a.synced);
     const unsyncedTracks = ownTracks.filter((t) => !t.synced && t.blob);
     if (unsyncedAlbums.length || unsyncedTracks.length) {
-      progress('Subiendo cambios…');
-      await pushLocalLibrary(uidKey, unsyncedAlbums, unsyncedTracks, (done, total) =>
-        progress(`Subiendo cambios… ${done}/${total}`)
-      );
-      cloud = await fetchCloudLibrary(uidKey);
+      background = { albums: unsyncedAlbums, tracks: unsyncedTracks };
     }
   }
 
@@ -119,15 +127,32 @@ async function syncLibrary(user, progress) {
     }
   }
 
-  const { albums, tracks } = mergeCloudLibrary(cloud, localAlbums, localTracks, uidKey);
+  const { albums: cloudAlbums, tracks: cloudTracks } = mergeCloudLibrary(
+    cloud,
+    localAlbums,
+    localTracks,
+    uidKey
+  );
   const stale = staleLocalItems(cloud, localAlbums, localTracks, uidKey);
   for (const id of stale.albumIds) await removeAlbum(id);
   for (const id of stale.trackIds) await removeTrack(id);
-  for (const album of albums) await putAlbum(album);
-  for (const track of tracks) await putTrack(track);
+
+  // lo local aún sin subir sigue visible mientras la nube se actualiza
+  const cloudAlbumIds = new Set(cloudAlbums.map((a) => a.id));
+  const cloudTrackIds = new Set(cloudTracks.map((t) => t.id));
+  const albums = [
+    ...cloudAlbums,
+    ...ownAlbums.filter((a) => !a.synced && !cloudAlbumIds.has(a.id)),
+  ];
+  const tracks = [
+    ...cloudTracks,
+    ...ownTracks.filter((t) => !t.synced && !cloudTrackIds.has(t.id)),
+  ];
+  for (const album of cloudAlbums) await putAlbum(album);
+  for (const track of cloudTracks) await putTrack(track);
   albums.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
   tracks.sort((a, b) => (a.addedAt || 0) - (b.addedAt || 0));
-  return { albums, tracks };
+  return { albums, tracks, background };
 }
 
 function bootForUser(user) {
@@ -171,6 +196,7 @@ export default function App() {
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState('');
   const [bootError, setBootError] = useState('');
+  const [bootErrorDetail, setBootErrorDetail] = useState('');
   const [bootText, setBootText] = useState('Preparando…');
 
   const tracksRef = useRef(tracks);
@@ -201,6 +227,40 @@ export default function App() {
     toastTimer.current = setTimeout(() => setToast(''), 3400);
   }, []);
 
+  // La nube se actualiza sin bloquear la app: si un archivo falla se
+  // mantiene en local y se reintenta en el próximo arranque.
+  const startBackgroundPush = useCallback(
+    (uidKey, job, isActive = () => true) => {
+      if (!job) return;
+      setBusy('Sincronizando en la nube…');
+      pushLocalLibrary(uidKey, job.albums, job.tracks, (done, total) => {
+        if (isActive()) setBusy(`Sincronizando en la nube… ${done}/${total}`);
+      })
+        .then(async ({ failed }) => {
+          const savedAlbums = await getAlbums();
+          const savedTracks = await getTracks();
+          if (!isActive()) return;
+          savedAlbums.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+          savedTracks.sort((a, b) => (a.addedAt || 0) - (b.addedAt || 0));
+          setAlbums(savedAlbums);
+          setTracks(savedTracks);
+          setQueue((prev) => prev.filter((id) => savedTracks.some((t) => t.id === id)));
+          setBusy('');
+          notify(
+            failed
+              ? `Sincronización incompleta: ${failed} archivo${failed === 1 ? '' : 's'} pendiente${failed === 1 ? '' : 's'}. Se reintentará al abrir la app.`
+              : 'Biblioteca sincronizada en la nube.'
+          );
+        })
+        .catch(() => {
+          if (!isActive()) return;
+          setBusy('');
+          notify('Sin conexión: la sincronización se reintentará al abrir la app.');
+        });
+    },
+    [notify]
+  );
+
   useEffect(() => {
     completeGoogleRedirect().catch((err) => {
       setAuthBusy(false);
@@ -212,6 +272,7 @@ export default function App() {
       if (nextUser) {
         setAuthError('');
         setBootError('');
+        setBootErrorDetail('');
       }
     });
     return unsub;
@@ -237,13 +298,18 @@ export default function App() {
     }
     let alive = true;
     setBootError('');
+    setBootErrorDetail('');
     setReady(false);
     bootForUser(user)
-      .then(({ albums: savedAlbums, tracks: savedTracks }) => {
+      .then(({ albums: savedAlbums, tracks: savedTracks, background, offline }) => {
         if (!alive) return;
         setAlbums(savedAlbums);
         setTracks(savedTracks);
         setReady(true);
+        if (offline) notify('Sin conexión: mostrando la biblioteca guardada en este dispositivo.');
+        if (background && (background.albums.length || background.tracks.length)) {
+          startBackgroundPush(user.uid, background, () => alive);
+        }
         try {
           const saved = JSON.parse(localStorage.getItem('onda-session') || 'null');
           if (!saved) return;
@@ -270,11 +336,13 @@ export default function App() {
             ? authErrorMessage(err)
             : 'No se pudo cargar la biblioteca. Revisa tu conexión e intenta de nuevo.'
         );
+        const detail = err?.code || err?.message || '';
+        setBootErrorDetail(typeof detail === 'string' ? detail.slice(0, 160) : '');
       });
     return () => {
       alive = false;
     };
-  }, [user]);
+  }, [user, startBackgroundPush, notify]);
 
   useEffect(() => () => clearTimeout(toastTimer.current), []);
 
@@ -942,6 +1010,7 @@ export default function App() {
         {user?.email && (
           <p className="splash-mail">Cuenta conectada: {user.email}</p>
         )}
+        {bootErrorDetail && <p className="splash-detail">{bootErrorDetail}</p>}
         <div className="splash-actions">
           <button className="btn btn-primary" onClick={() => window.location.reload()}>
             Reintentar
