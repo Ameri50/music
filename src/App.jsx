@@ -8,10 +8,28 @@ import {
   removeTrack,
 } from './lib/db';
 import { fmtTotal, isAudioFile, normalizeAudioFile, parseFileName, readDuration, uid } from './lib/utils';
+import {
+  authErrorMessage,
+  deleteAlbumCloud,
+  deleteTrackCloud,
+  downloadTrackAudio,
+  fetchCloudLibrary,
+  mergeCloudLibrary,
+  pushLocalLibrary,
+  saveAlbumCloud,
+  saveTrackCloud,
+  signInUser,
+  signOutUser,
+  staleLocalItems,
+  uploadAlbumCover,
+  uploadTrackAudio,
+  watchAuth,
+} from './lib/cloud';
 import { useObjectUrl } from './lib/useObjectUrl';
 import AlbumCover from './components/AlbumCover';
 import Player from './components/Player';
 import TrackList from './components/TrackList';
+import Login from './components/Login';
 
 const PLAYLIST_URL =
   'https://youtube.com/playlist?list=OLAK5uy_lp0eCIgHOF-u_WvpBMef-eVNUDAwT14tg&si=gZ08a4L7MEKGStsB';
@@ -19,41 +37,92 @@ const REAL_HASTA_SPOTIFY =
   'https://open.spotify.com/intl-es/album/4Gqg391dMB9BA7pPW331Ag?si=H5XjjPQgSJ6eOvgiylsMvA';
 const REPEAT_CYCLE = { all: 'one', one: 'off', off: 'all' };
 
-let bootPromise = null;
-function boot() {
-  if (!bootPromise) {
-    bootPromise = (async () => {
-      let albums = await getAlbums();
-      if (!albums.length) {
-        const now = Date.now();
-        albums = [
-          {
-            id: uid(),
-            name: 'Anuel AA',
-            artist: 'Anuel AA',
-            ytUrl: PLAYLIST_URL,
-            builtIn: true,
-            createdAt: now,
-          },
-          { id: uid(), name: 'Sencillos', artist: '', builtIn: true, createdAt: now + 1 },
-        ];
-        for (const album of albums) await putAlbum(album);
-      }
-      albums.sort((a, b) => a.createdAt - b.createdAt);
-      // completa el link de Spotify en álbumes de Real Hasta la Muerte sin enlace
-      const realHastaAlbums = albums.filter((a) =>
-        a.name.trim().toLowerCase().startsWith('real hasta la muerte')
+let bootProgressCb = null;
+const bootCache = new Map();
+
+async function syncLibrary(user, progress) {
+  const uidKey = user.uid;
+  const localAlbums = await getAlbums();
+  const localTracks = await getTracks();
+  let cloud = await fetchCloudLibrary(uidKey);
+
+  const ownAlbums = localAlbums.filter((a) => !a.ownerUid || a.ownerUid === uidKey);
+  const ownTracks = localTracks.filter((t) => !t.ownerUid || t.ownerUid === uidKey);
+
+  if (!cloud.albums.length && !cloud.tracks.length) {
+    if (ownAlbums.length) {
+      // primera sincronización: sube lo que ya existe en este dispositivo
+      progress('Subiendo tu biblioteca a la nube…');
+      await pushLocalLibrary(
+        uidKey,
+        [...ownAlbums].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0)),
+        ownTracks.filter((t) => t.blob),
+        (done, total) => progress(`Subiendo biblioteca… ${done}/${total}`)
       );
-      for (const album of realHastaAlbums) {
-        if (album.spotifyUrl) continue;
-        album.spotifyUrl = REAL_HASTA_SPOTIFY;
-        await putAlbum({ ...album });
-      }
-      const tracks = await getTracks();
-      return { albums, tracks };
-    })();
+      cloud = await fetchCloudLibrary(uidKey);
+    } else {
+      progress('Preparando tu biblioteca…');
+      const now = Date.now();
+      await saveAlbumCloud(uidKey, {
+        id: 'builtin-anuel-aa',
+        name: 'Anuel AA',
+        artist: 'Anuel AA',
+        ytUrl: PLAYLIST_URL,
+        builtIn: true,
+        createdAt: now,
+      });
+      await saveAlbumCloud(uidKey, {
+        id: 'builtin-sencillos',
+        name: 'Sencillos',
+        artist: '',
+        builtIn: true,
+        createdAt: now + 1,
+      });
+      cloud = await fetchCloudLibrary(uidKey);
+    }
+  } else {
+    const unsyncedAlbums = ownAlbums.filter((a) => !a.synced);
+    const unsyncedTracks = ownTracks.filter((t) => !t.synced && t.blob);
+    if (unsyncedAlbums.length || unsyncedTracks.length) {
+      progress('Subiendo cambios…');
+      await pushLocalLibrary(uidKey, unsyncedAlbums, unsyncedTracks, (done, total) =>
+        progress(`Subiendo cambios… ${done}/${total}`)
+      );
+      cloud = await fetchCloudLibrary(uidKey);
+    }
   }
-  return bootPromise;
+
+  // completa el link de Spotify en álbumes de Real Hasta la Muerte sin enlace
+  for (const album of cloud.albums) {
+    if (
+      album.name.trim().toLowerCase().startsWith('real hasta la muerte') &&
+      !album.spotifyUrl
+    ) {
+      album.spotifyUrl = REAL_HASTA_SPOTIFY;
+      await saveAlbumCloud(uidKey, album);
+    }
+  }
+
+  const { albums, tracks } = mergeCloudLibrary(cloud, localAlbums, localTracks, uidKey);
+  const stale = staleLocalItems(cloud, localAlbums, localTracks, uidKey);
+  for (const id of stale.albumIds) await removeAlbum(id);
+  for (const id of stale.trackIds) await removeTrack(id);
+  for (const album of albums) await putAlbum(album);
+  for (const track of tracks) await putTrack(track);
+  albums.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+  tracks.sort((a, b) => (a.addedAt || 0) - (b.addedAt || 0));
+  return { albums, tracks };
+}
+
+function bootForUser(user) {
+  if (!bootCache.has(user.uid)) {
+    const promise = syncLibrary(user, (text) => bootProgressCb?.(text)).catch((err) => {
+      bootCache.delete(user.uid);
+      throw err;
+    });
+    bootCache.set(user.uid, promise);
+  }
+  return bootCache.get(user.uid);
 }
 
 export default function App() {
@@ -82,6 +151,11 @@ export default function App() {
   const [toast, setToast] = useState('');
   const [dragging, setDragging] = useState(false);
   const [albumModal, setAlbumModal] = useState(null);
+  const [user, setUser] = useState(undefined); // undefined = comprobando sesión
+  const [authBusy, setAuthBusy] = useState(false);
+  const [authError, setAuthError] = useState('');
+  const [bootError, setBootError] = useState('');
+  const [bootText, setBootText] = useState('Preparando…');
 
   const tracksRef = useRef(tracks);
   const navRef = useRef({});
@@ -94,7 +168,8 @@ export default function App() {
 
   const currentTrack = tracks.find((t) => t.id === currentId) || null;
   const currentAlbum = albums.find((a) => a.id === currentTrack?.albumId) || null;
-  const coverUrl = useObjectUrl(currentAlbum?.coverBlob);
+  const coverUrl =
+    useObjectUrl(currentAlbum?.coverBlob) || currentAlbum?.coverUrl || '';
   const albumsById = useMemo(
     () => Object.fromEntries(albums.map((a) => [a.id, a])),
     [albums]
@@ -111,55 +186,201 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    let alive = true;
-    boot().then(({ albums: savedAlbums, tracks: savedTracks }) => {
-      if (!alive) return;
-      setAlbums(savedAlbums);
-      setTracks(savedTracks);
-      setReady(true);
-      try {
-        const saved = JSON.parse(localStorage.getItem('onda-session') || 'null');
-        if (!saved) return;
-        if (typeof saved.volume === 'number') setVolume(saved.volume);
-        if (saved.repeat in REPEAT_CYCLE) setRepeat(saved.repeat);
-        if (typeof saved.shuffle === 'boolean') setShuffle(saved.shuffle);
-        if (saved.trackId && savedTracks.some((t) => t.id === saved.trackId)) {
-          const savedQueue = Array.isArray(saved.queue)
-            ? saved.queue.filter((id) => savedTracks.some((t) => t.id === id))
-            : [];
-          setQueue(savedQueue.length ? savedQueue : savedTracks.map((t) => t.id));
-          pendingRestoreRef.current = { trackId: saved.trackId, time: Number(saved.time) || 0 };
-          setCurrentId(saved.trackId);
-        }
-      } catch {
-        /* sesión corrupta: se ignora */
+    const unsub = watchAuth((nextUser) => {
+      setUser(nextUser);
+      setAuthBusy(false);
+      if (nextUser) {
+        setAuthError('');
+        setBootError('');
       }
     });
+    return unsub;
+  }, []);
+
+  useEffect(() => {
+    bootProgressCb = setBootText;
     return () => {
-      alive = false;
-      clearTimeout(toastTimer.current);
+      bootProgressCb = null;
     };
   }, []);
+
+  useEffect(() => {
+    if (!user) {
+      setReady(false);
+      setAlbums([]);
+      setTracks([]);
+      setQueue([]);
+      setCurrentId(null);
+      setIsPlaying(false);
+      audioRef.current?.pause();
+      return;
+    }
+    let alive = true;
+    setBootError('');
+    setReady(false);
+    bootForUser(user)
+      .then(({ albums: savedAlbums, tracks: savedTracks }) => {
+        if (!alive) return;
+        setAlbums(savedAlbums);
+        setTracks(savedTracks);
+        setReady(true);
+        try {
+          const saved = JSON.parse(localStorage.getItem('onda-session') || 'null');
+          if (!saved) return;
+          if (typeof saved.volume === 'number') setVolume(saved.volume);
+          if (saved.repeat in REPEAT_CYCLE) setRepeat(saved.repeat);
+          if (typeof saved.shuffle === 'boolean') setShuffle(saved.shuffle);
+          if (saved.trackId && savedTracks.some((t) => t.id === saved.trackId)) {
+            const savedQueue = Array.isArray(saved.queue)
+              ? saved.queue.filter((id) => savedTracks.some((t) => t.id === id))
+              : [];
+            setQueue(savedQueue.length ? savedQueue : savedTracks.map((t) => t.id));
+            pendingRestoreRef.current = { trackId: saved.trackId, time: Number(saved.time) || 0 };
+            setCurrentId(saved.trackId);
+          }
+        } catch {
+          /* sesión corrupta: se ignora */
+        }
+      })
+      .catch((err) => {
+        if (!alive) return;
+        console.error(err);
+        setBootError(
+          err?.code?.includes('permission-denied')
+            ? authErrorMessage(err)
+            : 'No se pudo cargar la biblioteca. Revisa tu conexión e intenta de nuevo.'
+        );
+      });
+    return () => {
+      alive = false;
+    };
+  }, [user]);
+
+  useEffect(() => () => clearTimeout(toastTimer.current), []);
+
+  const handleSignIn = useCallback(async (email, password) => {
+    setAuthBusy(true);
+    setAuthError('');
+    try {
+      await signInUser(email, password);
+    } catch (err) {
+      setAuthError(authErrorMessage(err));
+      setAuthBusy(false);
+    }
+  }, []);
+
+  const handleSignOut = useCallback(async () => {
+    if (!confirm('¿Cerrar sesión? Tu biblioteca seguirá guardada en la nube.')) return;
+    bootCache.clear();
+    audioRef.current?.pause();
+    await signOutUser();
+  }, []);
+
+  const refreshingRef = useRef(false);
+  const refreshLibrary = useCallback(async () => {
+    if (!user || !ready || refreshingRef.current) return;
+    refreshingRef.current = true;
+    try {
+      const cloud = await fetchCloudLibrary(user.uid);
+      const localAlbums = await getAlbums();
+      const localTracks = await getTracks();
+      const stale = staleLocalItems(cloud, localAlbums, localTracks, user.uid);
+      for (const id of stale.albumIds) await removeAlbum(id);
+      for (const id of stale.trackIds) await removeTrack(id);
+      const { albums: mergedAlbums, tracks: mergedTracks } = mergeCloudLibrary(
+        cloud,
+        localAlbums,
+        localTracks,
+        user.uid
+      );
+      const cloudAlbumIds = new Set(mergedAlbums.map((a) => a.id));
+      const cloudTrackIds = new Set(mergedTracks.map((t) => t.id));
+      const nextAlbums = [
+        ...mergedAlbums,
+        ...localAlbums.filter((a) => !a.synced && !cloudAlbumIds.has(a.id)),
+      ].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+      const nextTracks = [
+        ...mergedTracks,
+        ...localTracks.filter((t) => !t.synced && !cloudTrackIds.has(t.id)),
+      ].sort((a, b) => (a.addedAt || 0) - (b.addedAt || 0));
+      for (const album of mergedAlbums) await putAlbum(album);
+      for (const track of mergedTracks) await putTrack(track);
+      setAlbums(nextAlbums);
+      setTracks(nextTracks);
+      setQueue((prev) => prev.filter((id) => nextTracks.some((t) => t.id === id)));
+      if (navRef.current.currentId && !nextTracks.some((t) => t.id === navRef.current.currentId)) {
+        audioRef.current?.pause();
+        setCurrentId(null);
+        setIsPlaying(false);
+      }
+    } catch {
+      /* sin conexión: se conserva lo local */
+    } finally {
+      refreshingRef.current = false;
+    }
+  }, [user, ready]);
+
+  useEffect(() => {
+    if (!ready) return;
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') refreshLibrary();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', onVisible);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', onVisible);
+    };
+  }, [ready, refreshLibrary]);
 
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio || !currentId) return;
     const track = tracksRef.current.find((t) => t.id === currentId);
     if (!track) return;
-    const url = URL.createObjectURL(track.blob);
-    audio.src = url;
-    setTime(0);
-    setDuration(track.duration || 0);
-    audio.load();
-    if (playOnLoadRef.current) {
-      playOnLoadRef.current = false;
-      audio.play().catch(() => {});
-    }
-    return () => {
-      audio.pause();
-      URL.revokeObjectURL(url);
+    let cancelled = false;
+    let objectUrl = '';
+
+    const start = (blob) => {
+      if (cancelled) return;
+      objectUrl = URL.createObjectURL(blob);
+      audio.src = objectUrl;
+      setTime(0);
+      setDuration(track.duration || 0);
+      audio.load();
+      if (playOnLoadRef.current) {
+        playOnLoadRef.current = false;
+        audio.play().catch(() => {});
+      }
     };
-  }, [currentId]);
+
+    if (track.blob) {
+      start(track.blob);
+    } else if (user) {
+      setBusy('Descargando canción…');
+      downloadTrackAudio(user.uid, track.id)
+        .then(async (blob) => {
+          if (cancelled) return;
+          setBusy('');
+          await putTrack({ ...track, blob });
+          setTracks((prev) => prev.map((t) => (t.id === track.id ? { ...t, blob } : t)));
+          start(blob);
+        })
+        .catch(() => {
+          if (cancelled) return;
+          setBusy('');
+          playOnLoadRef.current = false;
+          setIsPlaying(false);
+          notify('No se pudo descargar la canción. Revisa tu conexión.');
+        });
+    }
+
+    return () => {
+      cancelled = true;
+      audio.pause();
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [currentId, user, notify]);
 
   useEffect(() => {
     if (audioRef.current) audioRef.current.volume = volume;
@@ -409,6 +630,7 @@ export default function App() {
         notify('Crea un álbum primero');
         return;
       }
+      if (!user) return;
       const raw = Array.from(fileList || []).filter(isAudioFile);
       if (!raw.length) {
         notify('Esos archivos no son de audio');
@@ -446,17 +668,37 @@ export default function App() {
           blob: file,
           fileName: file.name,
           addedAt: Date.now(),
+          synced: false,
+          ownerUid: user.uid,
         };
         await putTrack(track);
         added.push(track);
       }
       setTracks((prev) => [...prev, ...added]);
+
+      let pending = 0;
+      for (let i = 0; i < added.length; i += 1) {
+        const track = added[i];
+        setBusy(`Subiendo a la nube… ${i + 1}/${added.length}`);
+        try {
+          await uploadTrackAudio(user.uid, track.id, track.blob);
+          await saveTrackCloud(user.uid, track);
+          const synced = { ...track, synced: true };
+          await putTrack(synced);
+          setTracks((prev) => prev.map((t) => (t.id === track.id ? synced : t)));
+        } catch {
+          pending += 1;
+        }
+      }
       setBusy('');
       const base =
         added.length === 1 ? `“${added[0].title}” agregada` : `${added.length} canciones agregadas`;
-      notify(skipped ? `${base} · ${skipped} ya estaba${skipped === 1 ? '' : 'n'}` : base);
+      const notes = [];
+      if (skipped) notes.push(`${skipped} ya estaba${skipped === 1 ? '' : 'n'}`);
+      if (pending) notes.push(`${pending} sin subir (revisa tu conexión)`);
+      notify(notes.length ? `${base} · ${notes.join(' · ')}` : base);
     },
-    [albums, notify]
+    [albums, notify, user]
   );
 
   const uploadTarget = useCallback(
@@ -490,6 +732,7 @@ export default function App() {
   );
 
   const createAlbum = async (data) => {
+    if (!user) return;
     const album = {
       id: uid(),
       name: data.name,
@@ -498,15 +741,34 @@ export default function App() {
       spotifyUrl: data.spotifyUrl || '',
       coverBlob: data.coverBlob || null,
       createdAt: Date.now(),
+      synced: false,
+      ownerUid: user.uid,
     };
     await putAlbum(album);
     setAlbums((prev) => [...prev, album]);
     setAlbumModal(null);
     setView({ name: 'album', id: album.id });
-    notify('Álbum creado');
+    try {
+      let coverUrl = '';
+      if (album.coverBlob) {
+        try {
+          coverUrl = await uploadAlbumCover(user.uid, album.id, album.coverBlob);
+        } catch {
+          /* sin portada remota: se sube al siguiente arranque */
+        }
+      }
+      const synced = { ...album, coverUrl, synced: true };
+      await saveAlbumCloud(user.uid, synced);
+      await putAlbum(synced);
+      setAlbums((prev) => prev.map((a) => (a.id === album.id ? synced : a)));
+      notify('Álbum creado');
+    } catch {
+      notify('Álbum creado · quedó pendiente de subir a la nube');
+    }
   };
 
   const saveAlbumEdits = async (album, data) => {
+    if (!user) return;
     const updated = {
       ...album,
       name: data.name,
@@ -518,11 +780,38 @@ export default function App() {
     await putAlbum(updated);
     setAlbums((prev) => prev.map((a) => (a.id === updated.id ? updated : a)));
     setAlbumModal(null);
-    notify('Álbum actualizado');
+    try {
+      let coverUrl = updated.coverUrl || '';
+      if (data.coverBlob) {
+        try {
+          coverUrl = await uploadAlbumCover(user.uid, updated.id, data.coverBlob);
+        } catch {
+          /* sin portada remota: se sube al siguiente arranque */
+        }
+      }
+      const synced = { ...updated, coverUrl, synced: true };
+      await saveAlbumCloud(user.uid, synced);
+      await putAlbum(synced);
+      setAlbums((prev) => prev.map((a) => (a.id === updated.id ? synced : a)));
+      notify('Álbum actualizado');
+    } catch {
+      notify('Álbum actualizado · quedó pendiente de subir a la nube');
+    }
   };
 
   const deleteTrackFlow = async (track) => {
     if (!confirm(`¿Eliminar “${track.title}” de tu biblioteca?`)) return;
+    if (user && track.synced) {
+      setBusy('Eliminando…');
+      try {
+        await deleteTrackCloud(user.uid, track.id);
+      } catch {
+        setBusy('');
+        notify('No se pudo eliminar en la nube. Revisa tu conexión e intenta de nuevo.');
+        return;
+      }
+      setBusy('');
+    }
     await removeTrack(track.id);
     setTracks((prev) => prev.filter((t) => t.id !== track.id));
     setQueue((prev) => prev.filter((id) => id !== track.id));
@@ -537,6 +826,20 @@ export default function App() {
   const deleteAlbumFlow = async (album) => {
     if (!confirm(`¿Eliminar el álbum “${album.name}” y sus canciones?`)) return;
     const ids = tracks.filter((t) => t.albumId === album.id).map((t) => t.id);
+    if (user) {
+      setBusy('Eliminando…');
+      try {
+        for (const track of tracks.filter((t) => t.albumId === album.id)) {
+          if (track.synced) await deleteTrackCloud(user.uid, track.id);
+        }
+        if (album.synced) await deleteAlbumCloud(user.uid, album.id);
+      } catch {
+        setBusy('');
+        notify('No se pudo eliminar en la nube. Revisa tu conexión e intenta de nuevo.');
+        return;
+      }
+      setBusy('');
+    }
     for (const id of ids) await removeTrack(id);
     await removeAlbum(album.id);
     setTracks((prev) => prev.filter((t) => t.albumId !== album.id));
@@ -576,6 +879,63 @@ export default function App() {
   const albumFiltered = q
     ? albumTracks.filter((t) => t.title.toLowerCase().includes(q) || (t.artist || '').toLowerCase().includes(q))
     : albumTracks;
+
+  if (user === undefined) {
+    return (
+      <div className="splash">
+        <span className="splash-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="26" height="26">
+            <path
+              d="M4 10v4M8 6v12M12 3v18M16 7v10M20 10v4"
+              stroke="currentColor"
+              strokeWidth="2.3"
+              strokeLinecap="round"
+            />
+          </svg>
+        </span>
+        <p>Comprobando sesión…</p>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <Login onSignIn={handleSignIn} error={authError} busy={authBusy} />;
+  }
+
+  if (bootError) {
+    return (
+      <div className="splash">
+        <h1>ONDA</h1>
+        <p>{bootError}</p>
+        <div className="splash-actions">
+          <button className="btn btn-primary" onClick={() => window.location.reload()}>
+            Reintentar
+          </button>
+          <button className="btn btn-ghost" onClick={handleSignOut}>
+            Cerrar sesión
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (!ready) {
+    return (
+      <div className="splash">
+        <span className="splash-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="26" height="26">
+            <path
+              d="M4 10v4M8 6v12M12 3v18M16 7v10M20 10v4"
+              stroke="currentColor"
+              strokeWidth="2.3"
+              strokeLinecap="round"
+            />
+          </svg>
+        </span>
+        <p>{bootText}</p>
+      </div>
+    );
+  }
 
   return (
     <div className="app">
@@ -629,6 +989,15 @@ export default function App() {
             <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" />
           </svg>
           <span>Agregar</span>
+        </button>
+
+        <button
+          className="user-btn"
+          title={user?.email || ''}
+          aria-label={`Cerrar sesión de ${user?.email || ''}`}
+          onClick={handleSignOut}
+        >
+          {(user?.email || '?').charAt(0).toUpperCase()}
         </button>
 
         <input

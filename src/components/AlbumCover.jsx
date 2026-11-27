@@ -2,7 +2,8 @@ import { useObjectUrl } from '../lib/useObjectUrl';
 import { hueOf, initialsOf } from '../lib/utils';
 
 export default function AlbumCover({ album, className = '' }) {
-  const url = useObjectUrl(album?.coverBlob);
+  const blobUrl = useObjectUrl(album?.coverBlob);
+  const url = blobUrl || album?.coverUrl || '';
   const name = album?.name || 'ONDA';
   const hue = hueOf(name);
   const style = url
