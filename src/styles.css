@@ -1054,6 +1054,42 @@ main {
   margin-top: 6px;
 }
 
+.link-note {
+  margin: -6px 0 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+.link-note.ok {
+  color: #a8d672;
+}
+
+.link-note.error {
+  color: #ff8fa0;
+}
+
+.link-preview {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.link-preview .cover-xs {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  border-radius: 9px;
+  font-size: 14px;
+}
+
+.btn-ghost.active {
+  border-color: rgba(201, 255, 77, 0.45);
+  color: var(--accent);
+}
+
 /* ---------- Sesión y sincronización ---------- */
 
 .user-btn {

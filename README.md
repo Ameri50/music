@@ -8,10 +8,11 @@ Reproductor de música personal hecho en React. Sube tus canciones y escúchalas
 
 - **Biblioteca compartida**: álbumes y canciones se guardan en Firebase (Firestore + Storage) y los ve cualquier cuenta que inicie sesión, en todos los dispositivos. El audio se cachea en IndexedDB para seguir sonando sin conexión.
 - **Álbum de Anuel** ya creado, con enlace a la playlist oficial de YouTube y espacio para subir sus canciones.
+- **Crear desde Spotify**: pega el enlace de un álbum y ONDA completa el nombre y la portada; el audio se agrega con tus propios archivos.
 - **Enlaces por álbum**: agrega links de Spotify o YouTube desde *Editar* (abren la app oficial; el audio se reproduce ahí).
 - **Subida ilimitada**: arrastra MP3/M4A/WAV/FLAC/OGG o usa el botón *Agregar*; crea tus propios álbumes con portada.
 - **Reproducción en segundo plano**: al bloquear el celular la música sigue sonando y aparecen los controles en la pantalla de bloqueo (Media Session API).
-- **Reproductor completo**: play/pausa, siguiente/anterior, barra de progreso, volumen, aleatorio y repetir.
+- **Reproductor completo**: play/pausa, siguiente/anterior, barra de progreso, volumen, aleatorio y repetir. El botón *Aleatorio* junto a *Reproducir* mezcla el álbum o toda la biblioteca.
 - **Recuerda dónde ibas**: al volver a abrir, restaura la última canción y su posición.
 
 ## Por qué no trae el audio de YouTube

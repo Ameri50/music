@@ -7,7 +7,16 @@ import {
   removeAlbum,
   removeTrack,
 } from './lib/db';
-import { fmtTotal, isAudioFile, normalizeAudioFile, parseFileName, readDuration, uid } from './lib/utils';
+import {
+  fetchSpotifyMeta,
+  fmtTotal,
+  isAudioFile,
+  normalizeAudioFile,
+  parseFileName,
+  parseSpotifyAlbum,
+  readDuration,
+  uid,
+} from './lib/utils';
 import {
   authErrorMessage,
   completeGoogleRedirect,
@@ -39,6 +48,26 @@ const PLAYLIST_URL =
 const REAL_HASTA_SPOTIFY =
   'https://open.spotify.com/intl-es/album/4Gqg391dMB9BA7pPW331Ag?si=H5XjjPQgSJ6eOvgiylsMvA';
 const REPEAT_CYCLE = { all: 'one', one: 'off', off: 'all' };
+
+function ShuffleIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="15"
+      height="15"
+      aria-hidden="true"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M3 6h3.2c1.4 0 2.7.7 3.5 1.8l6.6 8.4c.8 1.1 2.1 1.8 3.5 1.8H21" />
+      <path d="M21 6h-1.2c-1.4 0-2.7.7-3.5 1.8l-1.1 1.4M3 18h3.2c1.4 0 2.7-.7 3.5-1.8l1.1-1.4" />
+      <path d="M18 3l3 3-3 3M18 15l3 3-3 3" />
+    </svg>
+  );
+}
 
 let bootProgressCb = null;
 const bootCache = new Map();
@@ -583,6 +612,18 @@ export default function App() {
     setCurrentId(track.id);
   }, []);
 
+  const playShuffled = useCallback(
+    (list) => {
+      const pool = (list || []).filter((t) => t?.id);
+      if (!pool.length) return;
+      const ids = pool.map((t) => t.id);
+      setShuffle(true);
+      playTrack(pool[Math.floor(Math.random() * pool.length)], ids);
+      notify('Aleatorio activado');
+    },
+    [playTrack, notify]
+  );
+
   const onLoadedMetadata = (e) => {
     const audio = e.target;
     const dur = isFinite(audio.duration) ? audio.duration : 0;
@@ -856,6 +897,7 @@ export default function App() {
       artist: data.artist,
       ytUrl: data.ytUrl || '',
       spotifyUrl: data.spotifyUrl || '',
+      coverUrl: data.coverUrl || '',
       coverBlob: data.coverBlob || null,
       createdAt: Date.now(),
       synced: false,
@@ -866,7 +908,7 @@ export default function App() {
     setAlbumModal(null);
     setView({ name: 'album', id: album.id });
     try {
-      let coverUrl = '';
+      let coverUrl = album.coverUrl;
       if (album.coverBlob) {
         try {
           coverUrl = await uploadAlbumCover(user.uid, album.id, album.coverBlob);
@@ -892,6 +934,7 @@ export default function App() {
       artist: data.artist,
       ytUrl: data.ytUrl || '',
       spotifyUrl: data.spotifyUrl || '',
+      ...(data.coverUrl ? { coverUrl: data.coverUrl } : {}),
       ...(data.coverBlob ? { coverBlob: data.coverBlob } : {}),
     };
     await putAlbum(updated);
@@ -1233,6 +1276,10 @@ export default function App() {
                     <span className="plus">+</span>
                     <span>Nuevo álbum</span>
                   </button>
+                  <button className="new-album" onClick={() => setAlbumModal('new-spotify')}>
+                    <span className="plus">♫</span>
+                    <span>Desde Spotify</span>
+                  </button>
                 </div>
               </section>
             </>
@@ -1267,6 +1314,15 @@ export default function App() {
                       }
                     >
                       ▶ Reproducir
+                    </button>
+                    <button
+                      className={`btn btn-ghost ${shuffle ? 'active' : ''}`}
+                      disabled={!albumFiltered.length}
+                      onClick={() => playShuffled(albumFiltered)}
+                      title="Reproducir este álbum en orden aleatorio"
+                    >
+                      <ShuffleIcon />
+                      Aleatorio
                     </button>
                     {albumView.spotifyUrl && (
                       <a
@@ -1399,6 +1455,15 @@ export default function App() {
                 >
                   ▶ Reproducir todo
                 </button>
+                <button
+                  className={`btn btn-ghost ${shuffle ? 'active' : ''}`}
+                  disabled={!songsView.length}
+                  onClick={() => playShuffled(songsView)}
+                  title="Reproducir toda la biblioteca en orden aleatorio"
+                >
+                  <ShuffleIcon />
+                  Aleatorio
+                </button>
               </div>
             </div>
             {songsView.length ? (
@@ -1444,10 +1509,13 @@ export default function App() {
       {busy && <div className="busy">{busy}</div>}
       {albumModal && (
         <AlbumModal
-          album={albumModal === 'new' ? null : albumModal}
+          album={albumModal === 'new' || albumModal === 'new-spotify' ? null : albumModal}
+          focusLink={albumModal === 'new-spotify'}
           onClose={() => setAlbumModal(null)}
           onSubmit={(data) =>
-            albumModal === 'new' ? createAlbum(data) : saveAlbumEdits(albumModal, data)
+            albumModal === 'new' || albumModal === 'new-spotify'
+              ? createAlbum(data)
+              : saveAlbumEdits(albumModal, data)
           }
         />
       )}
@@ -1455,13 +1523,44 @@ export default function App() {
   );
 }
 
-function AlbumModal({ album, onClose, onSubmit }) {
+function AlbumModal({ album, onClose, onSubmit, focusLink = false }) {
   const editing = Boolean(album);
   const [name, setName] = useState(album?.name || '');
   const [artist, setArtist] = useState(album?.artist || '');
   const [spotifyUrl, setSpotifyUrl] = useState(album?.spotifyUrl || '');
   const [ytUrl, setYtUrl] = useState(album?.ytUrl || '');
   const [coverFile, setCoverFile] = useState(null);
+  const [coverUrl, setCoverUrl] = useState(album?.coverUrl || '');
+  const [linkState, setLinkState] = useState('');
+  const fetchedRef = useRef(editing ? parseSpotifyAlbum(album?.spotifyUrl) : '');
+
+  // Con un enlace de álbum de Spotify se completan nombre y portada solos.
+  useEffect(() => {
+    const id = parseSpotifyAlbum(spotifyUrl);
+    if (!id || fetchedRef.current === id) return;
+    fetchedRef.current = id;
+    let alive = true;
+    setLinkState('loading');
+    const timer = setTimeout(() => {
+      fetchSpotifyMeta(spotifyUrl)
+        .then((meta) => {
+          if (!alive || !meta) return;
+          setSpotifyUrl(meta.url);
+          setName((prev) => prev.trim() || meta.name);
+          if (meta.coverUrl) setCoverUrl(meta.coverUrl);
+          setLinkState('ok');
+        })
+        .catch(() => {
+          if (!alive) return;
+          fetchedRef.current = '';
+          setLinkState('error');
+        });
+    }, 400);
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+    };
+  }, [spotifyUrl]);
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -1476,15 +1575,44 @@ function AlbumModal({ album, onClose, onSubmit }) {
             artist: artist.trim(),
             spotifyUrl: spotifyUrl.trim(),
             ytUrl: ytUrl.trim(),
+            coverUrl: coverUrl || undefined,
             coverBlob: coverFile || undefined,
           });
         }}
       >
         <h2>{editing ? 'Editar álbum' : 'Nuevo álbum'}</h2>
         <label>
+          Link de Spotify
+          <input
+            autoFocus={focusLink}
+            value={spotifyUrl}
+            onChange={(e) => setSpotifyUrl(e.target.value)}
+            placeholder="https://open.spotify.com/album/…"
+            inputMode="url"
+            autoComplete="off"
+          />
+        </label>
+        {linkState === 'loading' && <p className="link-note">Leyendo el enlace de Spotify…</p>}
+        {linkState === 'ok' && (
+          <p className="link-note ok">
+            Nombre y portada cargados desde Spotify. El audio se agrega con tus archivos.
+          </p>
+        )}
+        {linkState === 'error' && (
+          <p className="link-note error">
+            No se pudo leer ese enlace. Revisa que sea de un álbum y escribe el nombre a mano.
+          </p>
+        )}
+        {!coverFile && coverUrl && (
+          <div className="link-preview">
+            <AlbumCover album={{ name: name || 'Álbum', coverUrl }} className="cover-xs" />
+            <span>Portada tomada del enlace</span>
+          </div>
+        )}
+        <label>
           Nombre
           <input
-            autoFocus
+            autoFocus={!focusLink}
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="Ej. Real Hasta la Muerte"
@@ -1505,15 +1633,6 @@ function AlbumModal({ album, onClose, onSubmit }) {
             type="file"
             accept="image/*"
             onChange={(e) => setCoverFile(e.target.files?.[0] || null)}
-          />
-        </label>
-        <label>
-          Link de Spotify
-          <input
-            value={spotifyUrl}
-            onChange={(e) => setSpotifyUrl(e.target.value)}
-            placeholder="https://open.spotify.com/album/…"
-            inputMode="url"
           />
         </label>
         <label>

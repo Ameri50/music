@@ -90,3 +90,28 @@ export function readDuration(file) {
     audio.src = url;
   });
 }
+
+export function parseSpotifyAlbum(url = '') {
+  const m = String(url).match(
+    /open\.spotify\.com\/(?:intl-[a-z-]+\/)?album\/([a-zA-Z0-9]+)/
+  );
+  return m ? m[1] : '';
+}
+
+// Solo metadatos (nombre y portada): Spotify no permite descargar el audio.
+export async function fetchSpotifyMeta(url) {
+  const id = parseSpotifyAlbum(url);
+  if (!id) return null;
+  const canonical = `https://open.spotify.com/album/${id}`;
+  const res = await fetch(
+    `https://open.spotify.com/oembed?url=${encodeURIComponent(canonical)}`
+  );
+  if (!res.ok) throw new Error('spotify-oembed');
+  const data = await res.json();
+  return {
+    url: canonical,
+    id,
+    name: (data.title || '').trim(),
+    coverUrl: data.thumbnail_url || '',
+  };
+}
