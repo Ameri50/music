@@ -20,13 +20,13 @@ Descargar o extraer el audio de una playlist de YouTube va contra sus términos 
 
 ## Cuenta y sincronización
 
-Al abrir la app pide iniciar sesión, con **Google** o con correo y contraseña, usando la **cuenta de administrador de Firebase** del proyecto `miapp-4a216` (la misma del panel de la tienda). Con esa sesión:
+Al abrir la app pide iniciar sesión, con **Google** o con correo y contraseña. Con esa sesión:
 
 - Los álbumes se guardan en la colección `onda_albums` y las canciones en `onda_tracks`, filtrados por tu `uid`.
 - El audio y las portadas van a Firebase Storage en `onda/<uid>/…`; Firestore solo guarda los metadatos.
 - La primera vez que inicias sesión en un dispositivo, lo que ya tenías en local se sube solo a la nube (con barra de progreso).
 - Al volver a abrir o cambiar de dispositivo, la nube manda: los cambios y borrados hechos en otro lado se reflejan (el audio se descarga y queda cacheado).
-- Las reglas de Firestore/Storage no cambian: ya permiten solo a los administradores, así que cualquier otra cuenta verá un error de permisos.
+- Reglas de Firebase: cada cuenta autenticada solo puede leer y escribir sus propios documentos y su carpeta `onda/<uid>/` (máximo 50 MB por archivo). El resto del proyecto mantiene sus reglas de administrador.
 
 El botón de Google usa una ventana emergente y, si el navegador la bloquea (Safari en iPhone), pasa automáticamente a redirección. El dominio debe estar en *Authentication → Settings → Authorized domains*: `ameri50.github.io` ya está autorizado; para usar Google en otro dominio (por ejemplo el de Vercel) hay que añadirlo ahí.
 

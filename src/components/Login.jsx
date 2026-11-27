@@ -84,7 +84,7 @@ export default function Login({ onSignIn, onGoogle, error, busy }) {
         <button type="submit" className="btn btn-primary login-btn" disabled={busy}>
           {busy ? 'Entrando…' : 'Entrar'}
         </button>
-        <small>Entra con la cuenta de administrador de la tienda.</small>
+        <small>Tu biblioteca queda ligada a esta cuenta.</small>
       </form>
     </div>
   );
