@@ -252,7 +252,7 @@ export function authErrorMessage(err) {
     return 'Ese método de inicio de sesión está desactivado en Firebase. Actívalo en Authentication → Sign-in method.';
   }
   if (code.includes('unauthorized-domain')) {
-    return 'Este dominio no está autorizado en Firebase. Agrégalo en Authentication → Settings → Dominios autorizados.';
+    return 'Google no está autorizado en este enlace (los dominios de vista previa de Vercel cambian en cada despliegue). Abre https://ameri50.github.io/music/ e inicia sesión ahí.';
   }
   if (code.includes('popup-blocked')) {
     return 'El navegador bloqueó la ventana de Google. Permite las ventanas emergentes e intenta de nuevo.';
