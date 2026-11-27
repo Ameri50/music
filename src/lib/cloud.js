@@ -1,4 +1,12 @@
-import { onAuthStateChanged, signInWithEmailAndPassword, signOut } from 'firebase/auth';
+import {
+  GoogleAuthProvider,
+  getRedirectResult,
+  onAuthStateChanged,
+  signInWithEmailAndPassword,
+  signInWithPopup,
+  signInWithRedirect,
+  signOut,
+} from 'firebase/auth';
 import {
   collection,
   deleteDoc,
@@ -21,6 +29,33 @@ const coverPath = (uid, albumId) => `onda/${uid}/cover-${albumId}`;
 export const watchAuth = (cb) => onAuthStateChanged(auth, cb);
 export const signInUser = (email, password) => signInWithEmailAndPassword(auth, email, password);
 export const signOutUser = () => signOut(auth);
+export const completeGoogleRedirect = () => getRedirectResult(auth);
+
+const googleProvider = () => {
+  const provider = new GoogleAuthProvider();
+  provider.setCustomParameters({ prompt: 'select_account' });
+  return provider;
+};
+
+export async function signInWithGoogle() {
+  try {
+    return await signInWithPopup(auth, googleProvider());
+  } catch (err) {
+    const code = err?.code || '';
+    if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
+      throw err;
+    }
+    // Safari/iPhone bloquea ventanas emergentes: se usa redirección
+    if (
+      code === 'auth/popup-blocked' ||
+      code === 'auth/operation-not-supported-in-this-environment'
+    ) {
+      await signInWithRedirect(auth, googleProvider());
+      return null;
+    }
+    throw err;
+  }
+}
 
 export async function fetchCloudLibrary(uid) {
   const [albumsSnap, tracksSnap] = await Promise.all([
@@ -188,7 +223,28 @@ export function authErrorMessage(err) {
   if (code.includes('too-many-requests')) return 'Demasiados intentos. Espera unos minutos.';
   if (code.includes('network-request-failed')) return 'Sin conexión a internet.';
   if (code.includes('operation-not-allowed')) {
-    return 'El acceso con correo está desactivado en Firebase.';
+    return 'Ese método de inicio de sesión está desactivado en Firebase. Actívalo en Authentication → Sign-in method.';
+  }
+  if (code.includes('unauthorized-domain')) {
+    return 'Este dominio no está autorizado en Firebase. Agrégalo en Authentication → Settings → Dominios autorizados.';
+  }
+  if (code.includes('popup-blocked')) {
+    return 'El navegador bloqueó la ventana de Google. Permite las ventanas emergentes e intenta de nuevo.';
+  }
+  if (code.includes('popup-closed-by-user') || code.includes('cancelled-popup-request')) {
+    return 'Se canceló el inicio de sesión con Google.';
+  }
+  if (code.includes('web-storage-unsupported')) {
+    return 'Safari está bloqueando el almacenamiento. Desactiva la navegación privada e intenta de nuevo.';
+  }
+  if (code.includes('redirect-cancelled-by-user')) {
+    return 'Se canceló el inicio de sesión con Google.';
+  }
+  if (code.includes('redirect-operation-pending')) {
+    return 'Ya hay un inicio de sesión en curso. Espera un momento.';
+  }
+  if (code.includes('account-exists-with-different-credential')) {
+    return 'Ese correo ya está registrado con contraseña. Entra con tu correo y contraseña.';
   }
   if (code.includes('permission-denied')) {
     return 'Esta cuenta no tiene permisos de administrador en Firebase.';

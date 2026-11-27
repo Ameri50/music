@@ -10,6 +10,7 @@ import {
 import { fmtTotal, isAudioFile, normalizeAudioFile, parseFileName, readDuration, uid } from './lib/utils';
 import {
   authErrorMessage,
+  completeGoogleRedirect,
   deleteAlbumCloud,
   deleteTrackCloud,
   downloadTrackAudio,
@@ -19,6 +20,7 @@ import {
   saveAlbumCloud,
   saveTrackCloud,
   signInUser,
+  signInWithGoogle,
   signOutUser,
   staleLocalItems,
   uploadAlbumCover,
@@ -200,6 +202,10 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    completeGoogleRedirect().catch((err) => {
+      setAuthBusy(false);
+      setAuthError(authErrorMessage(err));
+    });
     const unsub = watchAuth((nextUser) => {
       setUser(nextUser);
       setAuthBusy(false);
@@ -277,6 +283,18 @@ export default function App() {
     setAuthError('');
     try {
       await signInUser(email, password);
+    } catch (err) {
+      setAuthError(authErrorMessage(err));
+      setAuthBusy(false);
+    }
+  }, []);
+
+  const handleGoogle = useCallback(async () => {
+    setAuthBusy(true);
+    setAuthError('');
+    try {
+      // devuelve null si el navegador tuvo que usar redirección (iPhone)
+      await signInWithGoogle();
     } catch (err) {
       setAuthError(authErrorMessage(err));
       setAuthBusy(false);
@@ -913,7 +931,7 @@ export default function App() {
   }
 
   if (!user) {
-    return <Login onSignIn={handleSignIn} error={authError} busy={authBusy} />;
+    return <Login onSignIn={handleSignIn} onGoogle={handleGoogle} error={authError} busy={authBusy} />;
   }
 
   if (bootError) {

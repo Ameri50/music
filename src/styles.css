@@ -1181,6 +1181,56 @@ main {
   line-height: 1.55;
 }
 
+.google-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  height: 46px;
+  margin-top: 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: #fff;
+  color: #1f1f1f;
+  font-size: 14.5px;
+  font-weight: 650;
+  cursor: pointer;
+  transition: transform 0.12s, box-shadow 0.2s, opacity 0.18s;
+}
+
+.google-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 12px 28px -16px rgba(255, 255, 255, 0.5);
+}
+
+.google-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+  transform: none;
+  box-shadow: none;
+}
+
+.google-btn svg {
+  flex: none;
+}
+
+.login-or {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 2px 0;
+  color: var(--faint);
+  font-size: 12px;
+}
+
+.login-or::before,
+.login-or::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--line);
+}
+
 .login-card label {
   display: flex;
   flex-direction: column;
