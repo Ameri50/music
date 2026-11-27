@@ -8,6 +8,7 @@ Reproductor de música personal hecho en React. Sube tus canciones y escúchalas
 
 - **Biblioteca local**: tus archivos de audio viven en tu dispositivo (IndexedDB). Nada se sube a un servidor.
 - **Álbum de Anuel** ya creado, con enlace a la playlist oficial de YouTube y espacio para subir sus canciones.
+- **Enlaces por álbum**: agrega links de Spotify o YouTube desde *Editar* (abren la app oficial; el audio se reproduce ahí).
 - **Subida ilimitada**: arrastra MP3/M4A/WAV/FLAC/OGG o usa el botón *Agregar*; crea tus propios álbumes con portada.
 - **Reproducción en segundo plano**: al bloquear el celular la música sigue sonando y aparecen los controles en la pantalla de bloqueo (Media Session API).
 - **Reproductor completo**: play/pausa, siguiente/anterior, barra de progreso, volumen, aleatorio y repetir.

@@ -15,6 +15,8 @@ import TrackList from './components/TrackList';
 
 const PLAYLIST_URL =
   'https://youtube.com/playlist?list=OLAK5uy_lp0eCIgHOF-u_WvpBMef-eVNUDAwT14tg&si=gZ08a4L7MEKGStsB';
+const REAL_HASTA_SPOTIFY =
+  'https://open.spotify.com/intl-es/album/4Gqg391dMB9BA7pPW331Ag?si=H5XjjPQgSJ6eOvgiylsMvA';
 const REPEAT_CYCLE = { all: 'one', one: 'off', off: 'all' };
 const AUDIO_EXT = /\.(mp3|m4a|mp4|aac|wav|ogg|oga|flac|opus|weba|webm)$/i;
 
@@ -39,6 +41,14 @@ function boot() {
         for (const album of albums) await putAlbum(album);
       }
       albums.sort((a, b) => a.createdAt - b.createdAt);
+      // completa el link de Spotify en álbumes creados antes de existir ese campo
+      const realHasta = albums.find(
+        (a) => a.name.trim().toLowerCase() === 'real hasta la muerte'
+      );
+      if (realHasta && !realHasta.spotifyUrl) {
+        realHasta.spotifyUrl = REAL_HASTA_SPOTIFY;
+        await putAlbum({ ...realHasta });
+      }
       const tracks = await getTracks();
       return { albums, tracks };
     })();
@@ -70,7 +80,7 @@ export default function App() {
   const [busy, setBusy] = useState('');
   const [toast, setToast] = useState('');
   const [dragging, setDragging] = useState(false);
-  const [newAlbumOpen, setNewAlbumOpen] = useState(false);
+  const [albumModal, setAlbumModal] = useState(null);
 
   const tracksRef = useRef(tracks);
   const navRef = useRef({});
@@ -442,14 +452,30 @@ export default function App() {
       name: data.name,
       artist: data.artist,
       ytUrl: data.ytUrl || '',
+      spotifyUrl: data.spotifyUrl || '',
       coverBlob: data.coverBlob || null,
       createdAt: Date.now(),
     };
     await putAlbum(album);
     setAlbums((prev) => [...prev, album]);
-    setNewAlbumOpen(false);
+    setAlbumModal(null);
     setView({ name: 'album', id: album.id });
     notify('Álbum creado');
+  };
+
+  const saveAlbumEdits = async (album, data) => {
+    const updated = {
+      ...album,
+      name: data.name,
+      artist: data.artist,
+      ytUrl: data.ytUrl || '',
+      spotifyUrl: data.spotifyUrl || '',
+      ...(data.coverBlob ? { coverBlob: data.coverBlob } : {}),
+    };
+    await putAlbum(updated);
+    setAlbums((prev) => prev.map((a) => (a.id === updated.id ? updated : a)));
+    setAlbumModal(null);
+    notify('Álbum actualizado');
   };
 
   const deleteTrackFlow = async (track) => {
@@ -629,7 +655,7 @@ export default function App() {
               <section>
                 <div className="section-head">
                   <h2>Álbumes</h2>
-                  <button className="text-btn" onClick={() => setNewAlbumOpen(true)}>
+                  <button className="text-btn" onClick={() => setAlbumModal('new')}>
                     + Nuevo álbum
                   </button>
                 </div>
@@ -650,7 +676,7 @@ export default function App() {
                       </button>
                     );
                   })}
-                  <button className="new-album" onClick={() => setNewAlbumOpen(true)}>
+                  <button className="new-album" onClick={() => setAlbumModal('new')}>
                     <span className="plus">+</span>
                     <span>Nuevo álbum</span>
                   </button>
@@ -689,6 +715,16 @@ export default function App() {
                     >
                       ▶ Reproducir
                     </button>
+                    {albumView.spotifyUrl && (
+                      <a
+                        className="btn btn-ghost"
+                        href={albumView.spotifyUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        Spotify ↗
+                      </a>
+                    )}
                     {albumView.ytUrl && (
                       <a
                         className="btn btn-ghost"
@@ -699,6 +735,9 @@ export default function App() {
                         Playlist en YouTube ↗
                       </a>
                     )}
+                    <button className="btn btn-ghost" onClick={() => setAlbumModal(albumView)}>
+                      Editar
+                    </button>
                     {!albumView.builtIn && (
                       <button className="btn btn-danger" onClick={() => deleteAlbumFlow(albumView)}>
                         Eliminar álbum
@@ -829,18 +868,26 @@ export default function App() {
 
       {toast && <div className="toast">{toast}</div>}
       {busy && <div className="busy">{busy}</div>}
-      {newAlbumOpen && (
-        <NewAlbumModal onClose={() => setNewAlbumOpen(false)} onSubmit={createAlbum} />
+      {albumModal && (
+        <AlbumModal
+          album={albumModal === 'new' ? null : albumModal}
+          onClose={() => setAlbumModal(null)}
+          onSubmit={(data) =>
+            albumModal === 'new' ? createAlbum(data) : saveAlbumEdits(albumModal, data)
+          }
+        />
       )}
     </div>
   );
 }
 
-function NewAlbumModal({ onClose, onSubmit }) {
-  const [name, setName] = useState('');
-  const [artist, setArtist] = useState('');
-  const [ytUrl, setYtUrl] = useState('');
-  const [coverBlob, setCoverBlob] = useState(null);
+function AlbumModal({ album, onClose, onSubmit }) {
+  const editing = Boolean(album);
+  const [name, setName] = useState(album?.name || '');
+  const [artist, setArtist] = useState(album?.artist || '');
+  const [spotifyUrl, setSpotifyUrl] = useState(album?.spotifyUrl || '');
+  const [ytUrl, setYtUrl] = useState(album?.ytUrl || '');
+  const [coverFile, setCoverFile] = useState(null);
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -853,12 +900,13 @@ function NewAlbumModal({ onClose, onSubmit }) {
           onSubmit({
             name: name.trim(),
             artist: artist.trim(),
+            spotifyUrl: spotifyUrl.trim(),
             ytUrl: ytUrl.trim(),
-            coverBlob,
+            coverBlob: coverFile || undefined,
           });
         }}
       >
-        <h2>Nuevo álbum</h2>
+        <h2>{editing ? 'Editar álbum' : 'Nuevo álbum'}</h2>
         <label>
           Nombre
           <input
@@ -882,7 +930,16 @@ function NewAlbumModal({ onClose, onSubmit }) {
           <input
             type="file"
             accept="image/*"
-            onChange={(e) => setCoverBlob(e.target.files?.[0] || null)}
+            onChange={(e) => setCoverFile(e.target.files?.[0] || null)}
+          />
+        </label>
+        <label>
+          Link de Spotify
+          <input
+            value={spotifyUrl}
+            onChange={(e) => setSpotifyUrl(e.target.value)}
+            placeholder="https://open.spotify.com/album/…"
+            inputMode="url"
           />
         </label>
         <label>
@@ -899,7 +956,7 @@ function NewAlbumModal({ onClose, onSubmit }) {
             Cancelar
           </button>
           <button type="submit" className="btn btn-primary">
-            Crear
+            {editing ? 'Guardar' : 'Crear'}
           </button>
         </div>
       </form>
