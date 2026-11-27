@@ -37,7 +37,22 @@ const googleProvider = () => {
   return provider;
 };
 
+const isMobileBrowser = () => {
+  const ua = navigator.userAgent;
+  // iPadOS se identifica como Macintosh
+  return (
+    /iPhone|iPad|iPod|Android/i.test(ua) ||
+    (/Macintosh/i.test(ua) && navigator.maxTouchPoints > 1)
+  );
+};
+
 export async function signInWithGoogle() {
+  // En móviles Safari/Chrome bloquean la ventana emergente de forma
+  // intermitente: la redirección es más estable.
+  if (isMobileBrowser()) {
+    await signInWithRedirect(auth, googleProvider());
+    return null;
+  }
   try {
     return await signInWithPopup(auth, googleProvider());
   } catch (err) {
@@ -45,7 +60,6 @@ export async function signInWithGoogle() {
     if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
       throw err;
     }
-    // Safari/iPhone bloquea ventanas emergentes: se usa redirección
     if (
       code === 'auth/popup-blocked' ||
       code === 'auth/operation-not-supported-in-this-environment'
