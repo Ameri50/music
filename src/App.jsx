@@ -48,7 +48,7 @@ async function syncLibrary(user, progress) {
   const localTracks = await getTracks();
   let cloud;
   try {
-    cloud = await fetchCloudLibrary(uidKey);
+    cloud = await fetchCloudLibrary();
   } catch (err) {
     if (err?.code?.includes('permission-denied')) throw err;
     // sin conexión: se abre con lo que ya está guardado en el dispositivo
@@ -60,18 +60,16 @@ async function syncLibrary(user, progress) {
     };
   }
 
-  const ownAlbums = localAlbums.filter((a) => !a.ownerUid || a.ownerUid === uidKey);
-  const ownTracks = localTracks.filter((t) => !t.ownerUid || t.ownerUid === uidKey);
-
+  // La biblioteca es compartida: lo local de cualquier cuenta es visible.
   // Lo que falte por subir no bloquea el arranque: se envía después.
   let background = null;
 
   if (!cloud.albums.length && !cloud.tracks.length) {
-    if (ownAlbums.length || ownTracks.length) {
+    if (localAlbums.length || localTracks.length) {
       // primera sincronización: se conserva lo local y se sube aparte
       background = {
-        albums: [...ownAlbums].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0)),
-        tracks: ownTracks.filter((t) => t.blob),
+        albums: [...localAlbums].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0)),
+        tracks: localTracks.filter((t) => t.blob),
       };
       progress('Biblioteca lista · sincronizando en la nube…');
     } else {
@@ -92,19 +90,20 @@ async function syncLibrary(user, progress) {
         builtIn: true,
         createdAt: now + 1,
       });
-      cloud = await fetchCloudLibrary(uidKey);
+      cloud = await fetchCloudLibrary();
     }
   } else {
-    const unsyncedAlbums = ownAlbums.filter((a) => !a.synced);
-    const unsyncedTracks = ownTracks.filter((t) => !t.synced && t.blob);
+    const unsyncedAlbums = localAlbums.filter((a) => !a.synced);
+    const unsyncedTracks = localTracks.filter((t) => !t.synced && t.blob);
     if (unsyncedAlbums.length || unsyncedTracks.length) {
       background = { albums: unsyncedAlbums, tracks: unsyncedTracks };
     }
   }
 
-  // completa el link de Spotify en álbumes de Real Hasta la Muerte sin enlace
+  // completa el link de Spotify en los álbumes propios sin enlace
   for (const album of cloud.albums) {
     if (
+      (album.uid || album.ownerUid) === uidKey &&
       album.name.trim().toLowerCase().startsWith('real hasta la muerte') &&
       !album.spotifyUrl
     ) {
@@ -113,11 +112,11 @@ async function syncLibrary(user, progress) {
     }
   }
 
-  // reintenta portadas que quedaron pendientes en una subida anterior
+  // reintenta portadas propias que quedaron pendientes en una subida anterior
   const localAlbumById = new Map(localAlbums.map((a) => [a.id, a]));
   for (const album of cloud.albums) {
     const local = localAlbumById.get(album.id);
-    if (!album.coverUrl && local?.coverBlob) {
+    if (album.uid === uidKey && !album.coverUrl && local?.coverBlob) {
       try {
         album.coverUrl = await uploadAlbumCover(uidKey, album.id, local.coverBlob);
         await saveAlbumCloud(uidKey, album);
@@ -133,7 +132,7 @@ async function syncLibrary(user, progress) {
     localTracks,
     uidKey
   );
-  const stale = staleLocalItems(cloud, localAlbums, localTracks, uidKey);
+  const stale = staleLocalItems(cloud, localAlbums, localTracks);
   for (const id of stale.albumIds) await removeAlbum(id);
   for (const id of stale.trackIds) await removeTrack(id);
 
@@ -142,11 +141,11 @@ async function syncLibrary(user, progress) {
   const cloudTrackIds = new Set(cloudTracks.map((t) => t.id));
   const albums = [
     ...cloudAlbums,
-    ...ownAlbums.filter((a) => !a.synced && !cloudAlbumIds.has(a.id)),
+    ...localAlbums.filter((a) => !a.synced && !cloudAlbumIds.has(a.id)),
   ];
   const tracks = [
     ...cloudTracks,
-    ...ownTracks.filter((t) => !t.synced && !cloudTrackIds.has(t.id)),
+    ...localTracks.filter((t) => !t.synced && !cloudTrackIds.has(t.id)),
   ];
   for (const album of cloudAlbums) await putAlbum(album);
   for (const track of cloudTracks) await putTrack(track);
@@ -226,6 +225,12 @@ export default function App() {
     clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setToast(''), 3400);
   }, []);
+
+  // Cada cuenta solo puede editar o borrar lo que ella subió.
+  const canEditItem = useCallback(
+    (item) => !item?.ownerUid || item.ownerUid === user?.uid,
+    [user]
+  );
 
   // La nube se actualiza sin bloquear la app: si un archivo falla se
   // mantiene en local y se reintenta en el próximo arranque.
@@ -381,10 +386,10 @@ export default function App() {
     if (!user || !ready || refreshingRef.current) return;
     refreshingRef.current = true;
     try {
-      const cloud = await fetchCloudLibrary(user.uid);
+      const cloud = await fetchCloudLibrary();
       const localAlbums = await getAlbums();
       const localTracks = await getTracks();
-      const stale = staleLocalItems(cloud, localAlbums, localTracks, user.uid);
+      const stale = staleLocalItems(cloud, localAlbums, localTracks);
       for (const id of stale.albumIds) await removeAlbum(id);
       for (const id of stale.trackIds) await removeTrack(id);
       const { albums: mergedAlbums, tracks: mergedTracks } = mergeCloudLibrary(
@@ -458,7 +463,7 @@ export default function App() {
       start(track.blob);
     } else if (user) {
       setBusy('Descargando canción…');
-      downloadTrackAudio(user.uid, track.id)
+      downloadTrackAudio(track.ownerUid || user.uid, track.id)
         .then(async (blob) => {
           if (cancelled) return;
           setBusy('');
@@ -900,11 +905,15 @@ export default function App() {
   };
 
   const deleteTrackFlow = async (track) => {
+    if (track.ownerUid && track.ownerUid !== user?.uid) {
+      notify('Solo la cuenta que subió esta canción puede eliminarla.');
+      return;
+    }
     if (!confirm(`¿Eliminar “${track.title}” de tu biblioteca?`)) return;
     if (user && track.synced) {
       setBusy('Eliminando…');
       try {
-        await deleteTrackCloud(user.uid, track.id);
+        await deleteTrackCloud(track.ownerUid || user.uid, track.id);
       } catch {
         setBusy('');
         notify('No se pudo eliminar en la nube. Revisa tu conexión e intenta de nuevo.');
@@ -924,15 +933,21 @@ export default function App() {
   };
 
   const deleteAlbumFlow = async (album) => {
+    if (album.ownerUid && album.ownerUid !== user?.uid) {
+      notify('Solo la cuenta que creó este álbum puede eliminarlo.');
+      return;
+    }
     if (!confirm(`¿Eliminar el álbum “${album.name}” y sus canciones?`)) return;
     const ids = tracks.filter((t) => t.albumId === album.id).map((t) => t.id);
     if (user) {
       setBusy('Eliminando…');
       try {
         for (const track of tracks.filter((t) => t.albumId === album.id)) {
-          if (track.synced) await deleteTrackCloud(user.uid, track.id);
+          if (!track.synced) continue;
+          if ((track.ownerUid || user.uid) !== user.uid) continue;
+          await deleteTrackCloud(track.ownerUid || user.uid, track.id);
         }
-        if (album.synced) await deleteAlbumCloud(user.uid, album.id);
+        if (album.synced) await deleteAlbumCloud(album.ownerUid || user.uid, album.id);
       } catch {
         setBusy('');
         notify('No se pudo eliminar en la nube. Revisa tu conexión e intenta de nuevo.');
@@ -1142,6 +1157,7 @@ export default function App() {
                   showAlbum
                   onPlay={(t) => playTrack(t, results.map((x) => x.id))}
                   onDelete={deleteTrackFlow}
+                  canDelete={canEditItem}
                 />
               ) : (
                 <div className="empty">
@@ -1260,10 +1276,12 @@ export default function App() {
                         Playlist en YouTube ↗
                       </a>
                     )}
-                    <button className="btn btn-ghost" onClick={() => setAlbumModal(albumView)}>
-                      Editar
-                    </button>
-                    {!albumView.builtIn && (
+                    {canEditItem(albumView) && (
+                      <button className="btn btn-ghost" onClick={() => setAlbumModal(albumView)}>
+                        Editar
+                      </button>
+                    )}
+                    {canEditItem(albumView) && !albumView.builtIn && (
                       <button className="btn btn-danger" onClick={() => deleteAlbumFlow(albumView)}>
                         Eliminar álbum
                       </button>
@@ -1332,6 +1350,7 @@ export default function App() {
                   isPlaying={isPlaying}
                   onPlay={(t) => playTrack(t, albumFiltered.map((x) => x.id))}
                   onDelete={deleteTrackFlow}
+                  canDelete={canEditItem}
                 />
               ) : (
                 <div className="empty">
@@ -1379,6 +1398,7 @@ export default function App() {
                 showAlbum
                 onPlay={(t) => playTrack(t, songsView.map((x) => x.id))}
                 onDelete={deleteTrackFlow}
+                canDelete={canEditItem}
               />
             ) : (
               <div className="empty">

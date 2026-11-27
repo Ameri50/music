@@ -1,6 +1,6 @@
 import { fmtTime } from '../lib/utils';
 
-export default function TrackList({ tracks, albumsById, currentId, isPlaying, onPlay, onDelete, showAlbum }) {
+export default function TrackList({ tracks, albumsById, currentId, isPlaying, onPlay, onDelete, showAlbum, canDelete }) {
   if (!tracks.length) return null;
   return (
     <ul className="track-list">
@@ -30,14 +30,16 @@ export default function TrackList({ tracks, albumsById, currentId, isPlaying, on
               </span>
               <span className="track-dur">{fmtTime(track.duration)}</span>
             </button>
-            <button
-              className="track-del"
-              onClick={() => onDelete(track)}
-              aria-label={`Eliminar ${track.title}`}
-              title="Eliminar"
-            >
-              ×
-            </button>
+            {(!canDelete || canDelete(track)) && (
+              <button
+                className="track-del"
+                onClick={() => onDelete(track)}
+                aria-label={`Eliminar ${track.title}`}
+                title="Eliminar"
+              >
+                ×
+              </button>
+            )}
           </li>
         );
       })}

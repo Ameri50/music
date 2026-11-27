@@ -6,7 +6,7 @@ Reproductor de música personal hecho en React. Sube tus canciones y escúchalas
 
 ## Qué incluye
 
-- **Biblioteca sincronizada**: con tu cuenta de administrador, álbumes y canciones se guardan en Firebase (Firestore + Storage) y aparecen en todos tus dispositivos. El audio se cachea en IndexedDB para seguir sonando sin conexión.
+- **Biblioteca compartida**: álbumes y canciones se guardan en Firebase (Firestore + Storage) y los ve cualquier cuenta que inicie sesión, en todos los dispositivos. El audio se cachea en IndexedDB para seguir sonando sin conexión.
 - **Álbum de Anuel** ya creado, con enlace a la playlist oficial de YouTube y espacio para subir sus canciones.
 - **Enlaces por álbum**: agrega links de Spotify o YouTube desde *Editar* (abren la app oficial; el audio se reproduce ahí).
 - **Subida ilimitada**: arrastra MP3/M4A/WAV/FLAC/OGG o usa el botón *Agregar*; crea tus propios álbumes con portada.
@@ -20,13 +20,14 @@ Descargar o extraer el audio de una playlist de YouTube va contra sus términos 
 
 ## Cuenta y sincronización
 
-Al abrir la app pide iniciar sesión, con **Google** o con correo y contraseña. Con esa sesión:
+Al abrir la app pide iniciar sesión, con **Google** o con correo y contraseña:
 
-- Los álbumes se guardan en la colección `onda_albums` y las canciones en `onda_tracks`, filtrados por tu `uid`.
-- El audio y las portadas van a Firebase Storage en `onda/<uid>/…`; Firestore solo guarda los metadatos.
-- La primera vez que inicias sesión en un dispositivo, lo que ya tenías en local se sube solo a la nube (con barra de progreso).
+- La biblioteca es **compartida**: cualquier cuenta que inicie sesión ve todos los álbumes (`onda_albums`) y canciones (`onda_tracks`), sin importar quién las subió.
+- Cada cuenta solo puede **editar o borrar lo que ella misma subió**; las demás lo ven y lo reproducen.
+- El audio y las portadas van a Firebase Storage en `onda/<uid>/…`; Firestore solo guarda los metadatos. Cualquier sesión puede leer el audio para reproducirlo.
+- La primera vez que una cuenta inicia sesión en un dispositivo, lo que ya había en local se sube solo en segundo plano (con barra de progreso); si un archivo falla se reintenta al abrir la app.
 - Al volver a abrir o cambiar de dispositivo, la nube manda: los cambios y borrados hechos en otro lado se reflejan (el audio se descarga y queda cacheado).
-- Reglas de Firebase: cada cuenta autenticada solo puede leer y escribir sus propios documentos y su carpeta `onda/<uid>/` (máximo 50 MB por archivo). El resto del proyecto mantiene sus reglas de administrador.
+- Reglas de Firebase: lectura de `onda_*` y de `onda/**` para cualquier sesión; escritura/borrado solo dentro de la carpeta y documentos del propio `uid` (máximo 50 MB por archivo). El resto del proyecto mantiene sus reglas de administrador.
 
 El botón de Google usa una ventana emergente y, si el navegador la bloquea (Safari en iPhone), pasa automáticamente a redirección. El dominio debe estar en *Authentication → Settings → Authorized domains*: `ameri50.github.io` ya está autorizado; para usar Google en otro dominio (por ejemplo el de Vercel) hay que añadirlo ahí.
 

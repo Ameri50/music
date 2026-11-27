@@ -12,9 +12,7 @@ import {
   deleteDoc,
   doc,
   getDocs,
-  query,
   setDoc,
-  where,
 } from 'firebase/firestore';
 import { deleteObject, getBlob, getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { auth, db, storage } from './firebase';
@@ -71,10 +69,11 @@ export async function signInWithGoogle() {
   }
 }
 
-export async function fetchCloudLibrary(uid) {
+// La biblioteca es compartida: cualquier sesión ve todo el catálogo.
+export async function fetchCloudLibrary() {
   const [albumsSnap, tracksSnap] = await Promise.all([
-    getDocs(query(collection(db, COL_ALBUMS), where('uid', '==', uid))),
-    getDocs(query(collection(db, COL_TRACKS), where('uid', '==', uid))),
+    getDocs(collection(db, COL_ALBUMS)),
+    getDocs(collection(db, COL_TRACKS)),
   ]);
   return {
     albums: albumsSnap.docs.map((d) => ({ id: d.id, ...d.data() })),
@@ -103,7 +102,7 @@ export async function downloadTrackAudio(uid, trackId) {
 
 export async function saveAlbumCloud(uid, album) {
   await setDoc(doc(db, COL_ALBUMS, album.id), {
-    uid,
+    uid: album.ownerUid || uid,
     name: album.name,
     artist: album.artist || '',
     spotifyUrl: album.spotifyUrl || '',
@@ -116,7 +115,7 @@ export async function saveAlbumCloud(uid, album) {
 
 export async function saveTrackCloud(uid, track) {
   await setDoc(doc(db, COL_TRACKS, track.id), {
-    uid,
+    uid: track.ownerUid || uid,
     albumId: track.albumId,
     title: track.title,
     artist: track.artist || '',
@@ -205,7 +204,7 @@ export function mergeCloudLibrary(cloud, localAlbums, localTracks, uid) {
       ...album,
       coverBlob: local?.coverBlob || null,
       synced: true,
-      ownerUid: uid,
+      ownerUid: album.uid || uid,
     };
   });
   const tracks = cloud.tracks.map((track) => {
@@ -215,7 +214,7 @@ export function mergeCloudLibrary(cloud, localAlbums, localTracks, uid) {
       ...track,
       blob: local?.blob,
       synced: true,
-      ownerUid: uid,
+      ownerUid: track.uid || uid,
     };
   });
   return { albums, tracks };
@@ -223,16 +222,12 @@ export function mergeCloudLibrary(cloud, localAlbums, localTracks, uid) {
 
 // Locales ya sincronizados que desaparecieron de la nube (borrados en otro
 // dispositivo). Los que nunca se sincronizaron no se tocan.
-export function staleLocalItems(cloud, localAlbums, localTracks, uid) {
+export function staleLocalItems(cloud, localAlbums, localTracks) {
   const albumIds = new Set(cloud.albums.map((a) => a.id));
   const trackIds = new Set(cloud.tracks.map((t) => t.id));
   return {
-    albumIds: localAlbums
-      .filter((a) => a.synced && a.ownerUid === uid && !albumIds.has(a.id))
-      .map((a) => a.id),
-    trackIds: localTracks
-      .filter((t) => t.synced && t.ownerUid === uid && !trackIds.has(t.id))
-      .map((t) => t.id),
+    albumIds: localAlbums.filter((a) => a.synced && !albumIds.has(a.id)).map((a) => a.id),
+    trackIds: localTracks.filter((t) => t.synced && !trackIds.has(t.id)).map((t) => t.id),
   };
 }
 
