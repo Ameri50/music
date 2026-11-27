@@ -13,6 +13,7 @@ Reproductor de música personal hecho en React. Sube tus canciones y escúchalas
 - **Subida ilimitada**: arrastra MP3/M4A/WAV/FLAC/OGG o usa el botón *Agregar*; crea tus propios álbumes con portada.
 - **Reproducción en segundo plano**: al bloquear el celular la música sigue sonando y aparecen los controles en la pantalla de bloqueo (Media Session API).
 - **Reproductor completo**: play/pausa, siguiente/anterior, barra de progreso, volumen, aleatorio y repetir. El botón *Aleatorio* junto a *Reproducir* mezcla el álbum o toda la biblioteca.
+- **Letras**: toca el título en el reproductor (o el icono de líneas de una canción) para abrir su letra, con los enlaces de Spotify y YouTube del álbum debajo. La letra la agrega o edita quien subió la canción y se sincroniza para todas las cuentas.
 - **Recuerda dónde ibas**: al volver a abrir, restaura la última canción y su posición.
 
 ## Por qué no trae el audio de YouTube

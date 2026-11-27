@@ -66,6 +66,7 @@ export default function Player({
   onVolume,
   onShuffle,
   onRepeat,
+  onLyrics,
 }) {
   const pct = duration ? Math.min(100, (time / duration) * 100) : 0;
 
@@ -88,22 +89,29 @@ export default function Player({
       <div className="player-inner">
         <div className="now">
           <AlbumCover album={album} className="now-cover" />
-          <div className="now-text">
-            <div className="now-title">{track ? track.title : 'Nada sonando'}</div>
-            <div className="now-sub">
+          <button
+            type="button"
+            className="now-text"
+            onClick={onLyrics}
+            disabled={!track}
+            title={track ? 'Ver letra' : undefined}
+            aria-label={track ? `Ver letra de ${track.title}` : undefined}
+          >
+            <span className="now-title">{track ? track.title : 'Nada sonando'}</span>
+            <span className="now-sub">
               {track ? track.artist || album?.artist || album?.name || 'ONDA' : 'Elige una canción'}
-            </div>
+            </span>
             {track && (
-              <div className="now-time">
+              <span className="now-time">
                 {fmtTime(time)} / {fmtTime(duration)}
-              </div>
+              </span>
             )}
-          </div>
+          </button>
         </div>
 
         <div className="controls">
           <button
-            className={`icon-btn ghost ${shuffle ? 'on' : ''}`}
+            className={`icon-btn ghost shuffle-btn ${shuffle ? 'on' : ''}`}
             onClick={onShuffle}
             aria-label="Aleatorio"
             title="Aleatorio"
@@ -125,7 +133,7 @@ export default function Player({
             {Icon.next}
           </button>
           <button
-            className={`icon-btn ghost ${repeat !== 'off' ? 'on' : ''}`}
+            className={`icon-btn ghost repeat-btn ${repeat !== 'off' ? 'on' : ''}`}
             onClick={onRepeat}
             aria-label={REPEAT_LABEL[repeat]}
             title={REPEAT_LABEL[repeat]}

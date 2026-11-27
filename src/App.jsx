@@ -959,6 +959,23 @@ export default function App() {
     }
   };
 
+  const saveLyrics = async (track, text) => {
+    const lyrics = String(text || '').replace(/\r\n/g, '\n').trim();
+    const updated = { ...track, lyrics };
+    await putTrack(updated);
+    setTracks((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
+    if (!track.synced || !user) {
+      notify('Letra guardada');
+      return;
+    }
+    try {
+      await saveTrackCloud(track.ownerUid || user.uid, updated);
+      notify('Letra guardada');
+    } catch {
+      notify('Letra guardada en este dispositivo; no se pudo subir a la nube.');
+    }
+  };
+
   const deleteTrackFlow = async (track) => {
     if (track.ownerUid && track.ownerUid !== user?.uid) {
       notify('Solo la cuenta que subió esta canción puede eliminarla.');
@@ -1049,6 +1066,8 @@ export default function App() {
   const albumFiltered = q
     ? albumTracks.filter((t) => t.title.toLowerCase().includes(q) || (t.artist || '').toLowerCase().includes(q))
     : albumTracks;
+  const lyricsTrack = view.name === 'lyrics' ? tracks.find((t) => t.id === view.id) : null;
+  const lyricsAlbum = lyricsTrack ? albumsById[lyricsTrack.albumId] : null;
 
   if (user === undefined) {
     return (
@@ -1211,6 +1230,7 @@ export default function App() {
                   isPlaying={isPlaying}
                   showAlbum
                   onPlay={(t) => playTrack(t, results.map((x) => x.id))}
+                  onLyrics={(t) => setView({ name: 'lyrics', id: t.id })}
                   onDelete={deleteTrackFlow}
                   canDelete={canEditItem}
                 />
@@ -1417,6 +1437,7 @@ export default function App() {
                   currentId={currentId}
                   isPlaying={isPlaying}
                   onPlay={(t) => playTrack(t, albumFiltered.map((x) => x.id))}
+                  onLyrics={(t) => setView({ name: 'lyrics', id: t.id })}
                   onDelete={deleteTrackFlow}
                   canDelete={canEditItem}
                 />
@@ -1430,6 +1451,30 @@ export default function App() {
           ) : (
             <div className="empty">
               <h3>Álbum no encontrado</h3>
+              <button className="btn btn-ghost" onClick={() => setView({ name: 'home' })}>
+                Volver a la biblioteca
+              </button>
+            </div>
+          ))}
+
+        {view.name === 'lyrics' &&
+          (lyricsTrack ? (
+            <LyricsView
+              track={lyricsTrack}
+              album={lyricsAlbum}
+              canEdit={canEditItem(lyricsTrack)}
+              onSave={(text) => saveLyrics(lyricsTrack, text)}
+              onBack={() =>
+                setView(
+                  lyricsAlbum
+                    ? { name: 'album', id: lyricsAlbum.id }
+                    : { name: 'home' }
+                )
+              }
+            />
+          ) : (
+            <div className="empty">
+              <h3>Canción no encontrada</h3>
               <button className="btn btn-ghost" onClick={() => setView({ name: 'home' })}>
                 Volver a la biblioteca
               </button>
@@ -1474,6 +1519,7 @@ export default function App() {
                 isPlaying={isPlaying}
                 showAlbum
                 onPlay={(t) => playTrack(t, songsView.map((x) => x.id))}
+                onLyrics={(t) => setView({ name: 'lyrics', id: t.id })}
                 onDelete={deleteTrackFlow}
                 canDelete={canEditItem}
               />
@@ -1503,6 +1549,9 @@ export default function App() {
         onVolume={setVolume}
         onShuffle={() => setShuffle((v) => !v)}
         onRepeat={() => setRepeat((r) => REPEAT_CYCLE[r])}
+        onLyrics={() =>
+          currentTrack && setView({ name: 'lyrics', id: currentTrack.id })
+        }
       />
 
       {toast && <div className="toast">{toast}</div>}
@@ -1520,6 +1569,99 @@ export default function App() {
         />
       )}
     </div>
+  );
+}
+
+function LyricsView({ track, album, canEdit, onSave, onBack }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+
+  const startEdit = () => {
+    setDraft(track.lyrics || '');
+    setEditing(true);
+  };
+
+  return (
+    <section>
+      <button className="back-btn" onClick={onBack}>
+        ← Volver
+      </button>
+      <div className="lyrics-head">
+        <AlbumCover album={album || { name: track.title }} className="lyrics-cover" />
+        <div className="lyrics-head-text">
+          <div className="album-kicker">Letra</div>
+          <h1>{track.title}</h1>
+          <p className="lyrics-sub">
+            {track.artist || album?.artist || 'Artista desconocido'}
+            {album ? ` · ${album.name}` : ''}
+          </p>
+        </div>
+      </div>
+
+      {editing ? (
+        <div className="lyrics-body">
+          <textarea
+            className="lyrics-edit"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            placeholder="Pega aquí la letra…"
+            autoFocus
+          />
+          <div className="lyrics-actions">
+            <button
+              className="btn btn-primary"
+              onClick={() => {
+                onSave(draft);
+                setEditing(false);
+              }}
+            >
+              Guardar letra
+            </button>
+            <button className="btn btn-ghost" onClick={() => setEditing(false)}>
+              Cancelar
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="lyrics-body">
+          {track.lyrics ? (
+            <p className="lyrics-text">{track.lyrics}</p>
+          ) : (
+            <p className="lyrics-empty">Esta canción no tiene letra todavía.</p>
+          )}
+          {canEdit && (
+            <div className="lyrics-actions">
+              <button
+                className={`btn ${track.lyrics ? 'btn-ghost' : 'btn-primary'}`}
+                onClick={startEdit}
+              >
+                {track.lyrics ? 'Editar letra' : 'Agregar letra'}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {(album?.spotifyUrl || album?.ytUrl) && (
+        <div className="lyrics-links">
+          {album?.spotifyUrl && (
+            <a
+              className="btn btn-ghost"
+              href={album.spotifyUrl}
+              target="_blank"
+              rel="noreferrer"
+            >
+              Abrir en Spotify ↗
+            </a>
+          )}
+          {album?.ytUrl && (
+            <a className="btn btn-ghost" href={album.ytUrl} target="_blank" rel="noreferrer">
+              Playlist en YouTube ↗
+            </a>
+          )}
+        </div>
+      )}
+    </section>
   );
 }
 

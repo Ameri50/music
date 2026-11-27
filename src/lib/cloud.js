@@ -175,6 +175,7 @@ export async function saveTrackCloud(uid, track) {
     duration: Number(track.duration) || 0,
     fileName: track.fileName || '',
     addedAt: Number(track.addedAt) || Date.now(),
+    lyrics: track.lyrics || '',
   });
 }
 

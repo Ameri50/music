@@ -1,6 +1,6 @@
 import { fmtTime } from '../lib/utils';
 
-export default function TrackList({ tracks, albumsById, currentId, isPlaying, onPlay, onDelete, showAlbum, canDelete }) {
+export default function TrackList({ tracks, albumsById, currentId, isPlaying, onPlay, onLyrics, onDelete, showAlbum, canDelete }) {
   if (!tracks.length) return null;
   return (
     <ul className="track-list">
@@ -30,6 +30,27 @@ export default function TrackList({ tracks, albumsById, currentId, isPlaying, on
               </span>
               <span className="track-dur">{fmtTime(track.duration)}</span>
             </button>
+            {onLyrics && (
+              <button
+                className="track-lyr"
+                onClick={() => onLyrics(track)}
+                aria-label={`Ver letra de ${track.title}`}
+                title="Letra"
+              >
+                <svg
+                  viewBox="0 0 24 24"
+                  width="17"
+                  height="17"
+                  aria-hidden="true"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.9"
+                  strokeLinecap="round"
+                >
+                  <path d="M5 7h14M5 12h14M5 17h9" />
+                </svg>
+              </button>
+            )}
             {(!canDelete || canDelete(track)) && (
               <button
                 className="track-del"
