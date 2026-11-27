@@ -27,7 +27,37 @@ const coverPath = (uid, albumId) => `onda/${uid}/cover-${albumId}`;
 export const watchAuth = (cb) => onAuthStateChanged(auth, cb);
 export const signInUser = (email, password) => signInWithEmailAndPassword(auth, email, password);
 export const signOutUser = () => signOut(auth);
-export const completeGoogleRedirect = () => getRedirectResult(auth);
+// Marcador para saber que venimos de una redirección de Google: si al volver
+// el resultado llega vacío, el navegador perdió la sesión entre sitios.
+const REDIRECT_FLAG = 'onda-google-redirect';
+
+const readRedirectFlag = () => {
+  try {
+    return sessionStorage.getItem(REDIRECT_FLAG);
+  } catch {
+    return null;
+  }
+};
+
+const clearRedirectFlag = () => {
+  try {
+    sessionStorage.removeItem(REDIRECT_FLAG);
+  } catch {
+    /* modo privado sin almacenamiento */
+  }
+};
+
+export async function completeGoogleRedirect() {
+  const result = await getRedirectResult(auth);
+  const pending = readRedirectFlag();
+  clearRedirectFlag();
+  if (!result?.user && pending) {
+    const err = new Error('Google no devolvió la sesión tras la redirección');
+    err.code = 'auth/redirect-lost';
+    throw err;
+  }
+  return result;
+}
 
 const googleProvider = () => {
   const provider = new GoogleAuthProvider();
@@ -44,8 +74,10 @@ const isMobileBrowser = () => {
   );
 };
 
+const isIosDevice = () => /iPhone|iPad|iPod/i.test(navigator.userAgent || '');
+
 export const isIosStandalone = () =>
-  /iPhone|iPad|iPod/i.test(navigator.userAgent || '') &&
+  isIosDevice() &&
   (window.matchMedia?.('(display-mode: standalone)')?.matches ||
     window.navigator.standalone === true);
 
@@ -54,12 +86,23 @@ export const isInAppBrowser = () =>
     navigator.userAgent || ''
   );
 
+async function redirectToGoogle() {
+  try {
+    sessionStorage.setItem(REDIRECT_FLAG, String(Date.now()));
+  } catch {
+    /* sin almacenamiento: solo se pierde la detección */
+  }
+  await signInWithRedirect(auth, googleProvider());
+  return null;
+}
+
 export async function signInWithGoogle() {
-  // En móviles Safari/Chrome bloquean la ventana emergente de forma
-  // intermitente: la redirección es más estable.
-  if (isMobileBrowser()) {
-    await signInWithRedirect(auth, googleProvider());
-    return null;
+  // Safari en iPhone suele perder el resultado de la redirección (bloquea el
+  // almacenamiento entre sitios), así que ahí se intenta primero la ventana
+  // emergente y la redirección queda como respaldo.
+  const popupFirst = isIosDevice() && !isIosStandalone();
+  if (isMobileBrowser() && !popupFirst) {
+    return redirectToGoogle();
   }
   try {
     return await signInWithPopup(auth, googleProvider());
@@ -70,10 +113,10 @@ export async function signInWithGoogle() {
     }
     if (
       code === 'auth/popup-blocked' ||
-      code === 'auth/operation-not-supported-in-this-environment'
+      code === 'auth/operation-not-supported-in-this-environment' ||
+      code === 'auth/web-storage-unsupported'
     ) {
-      await signInWithRedirect(auth, googleProvider());
-      return null;
+      return redirectToGoogle();
     }
     throw err;
   }
@@ -288,6 +331,11 @@ export function authErrorMessage(err) {
   }
   if (code.includes('redirect-cancelled-by-user')) {
     return 'Se canceló el inicio de sesión con Google.';
+  }
+  if (code.includes('redirect-lost')) {
+    return isIosStandalone()
+      ? 'Google entró pero la app instalada no pudo recuperar la sesión. Abre ameri50.github.io/music en Safari o entra con correo y contraseña.'
+      : 'Google se abrió pero el navegador no devolvió la sesión. Toca de nuevo y elige la misma cuenta, o entra con correo y contraseña.';
   }
   if (code.includes('redirect-operation-pending')) {
     return 'Ya hay un inicio de sesión en curso. Espera un momento.';
